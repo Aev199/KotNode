@@ -16,7 +16,7 @@ namespace KotNode.AutoCAD
     public static class AssemblyViews
     {
         internal const string Key="KOTNODE_VIEW_1";
-        internal const int Revision=2;
+        internal const int Revision=3;
         internal const string VisibleLayer="NA_VISIBLE",HiddenLayer="NA_HIDDEN",CutLayer="NA_CUT",HatchLayer="NA_HATCH";
         static double PaperScale(ViewData d)=>d.AnnotationScale>0?d.AnnotationScale:20;
         static void Layers(Database db,Transaction tr)
@@ -233,38 +233,61 @@ namespace KotNode.AutoCAD
         // depths of overlapping solids and splits curves at projected intersections.
         static void ProjectCurves(BlockTableRecord block,Transaction tr,Database db,List<Solid3d> bodies,ViewData data)
         {
-            double minX=bodies.Min(b=>b.GeometricExtents.MinPoint.X);
-            double maxX=bodies.Max(b=>b.GeometricExtents.MaxPoint.X);
-            double maxZ=bodies.Max(b=>b.GeometricExtents.MaxPoint.Z);
-            double margin=Math.Max(1,(maxX-minX)*0.01);
-            double z=maxZ+margin;
-            var points=new Point3dCollection(new[]{new Point3d(minX-margin,0,z),new Point3d(maxX+margin,0,z)});
-            var section=new Section(points,Vector3d.YAxis,Vector3d.ZAxis){State=SectionState.Plane};
+            // Section/elevation generation can return empty arrays for transient solids.
+            // Register transformed copies temporarily; never transform the original model.
             var space=AssemblyDrawing.ModelSpace(db,tr,OpenMode.ForWrite);
-            space.AppendEntity(section);tr.AddNewlyCreatedDBObject(section,true);
+            var temporary=new List<Solid3d>();
             var edges=new List<ProjectionVisibility.Edge>();
+            Section section=null;
             try
             {
+                foreach(var body in bodies)
+                {
+                    var copy=(Solid3d)body.Clone();
+                    try
+                    {
+                        copy.SetDatabaseDefaults(db);copy.Layer="0";
+                        space.AppendEntity(copy);tr.AddNewlyCreatedDBObject(copy,true);
+                        temporary.Add(copy);
+                    }
+                    catch {if(copy.ObjectId.IsNull)copy.Dispose();throw;}
+                }
+                double minX=bodies.Min(b=>b.GeometricExtents.MinPoint.X);
+                double maxX=bodies.Max(b=>b.GeometricExtents.MaxPoint.X);
+                double minY=bodies.Min(b=>b.GeometricExtents.MinPoint.Y);
+                double maxZ=bodies.Max(b=>b.GeometricExtents.MaxPoint.Z);
+                double margin=Math.Max(1,(maxX-minX)*0.01);
+                double z=maxZ+margin;
+                var points=new Point3dCollection(new[]{new Point3d(minX-margin,minY-margin,z),new Point3d(maxX+margin,minY-margin,z)});
+                section=new Section(points,Vector3d.YAxis,Vector3d.ZAxis);
+                section.SetDatabaseDefaults(db);section.State=SectionState.Plane;
+                space.AppendEntity(section);tr.AddNewlyCreatedDBObject(section,true);
                 var settings=(SectionSettings)tr.GetObject(section.Settings,OpenMode.ForWrite);
                 var type=SectionType.Section2d;
                 settings.CurrentSectionType=type;
+                settings.SetGenerationOptions(type,SectionGeneration.SourceSelectedObjects|SectionGeneration.DestinationNewBlock);
+                settings.SetSourceObjects(type,new ObjectIdCollection(temporary.Select(b=>b.ObjectId).ToArray()));
                 settings.SetVisibility(type,SectionGeometry.BackgroundGeometry,true);
                 settings.SetVisibility(type,SectionGeometry.ForegroundGeometry,true);
                 settings.SetVisibility(type,SectionGeometry.CurveTangencyLines,false);
                 var shift=Matrix3d.Displacement(new Vector3d(0,0,-z));
-                for(int i=0;i<bodies.Count;i++)
+                Diagnostics.Step("Проекция: тел "+temporary.Count+", плоскость Z="+z.ToString("G17")+", верх модели Z="+maxZ.ToString("G17"));
+                for(int i=0;i<temporary.Count;i++)
                 {
                     for(int pass=0;pass<(data.Hidden?2:1);pass++)
                     {
                         bool hidden=pass==1;
                         settings.SetHiddenLine(type,SectionGeometry.BackgroundGeometry,hidden);
                         settings.SetHiddenLine(type,SectionGeometry.ForegroundGeometry,hidden);
-                        section.GenerateSectionGeometry(bodies[i],out Array cut,out Array fill,out Array back,out Array front,out Array tangent);
+                        section.GenerateSectionGeometry(temporary[i],out Array cut,out Array fill,out Array back,out Array front,out Array tangent);
                         var all=Entities(cut).Concat(Entities(fill)).Concat(Entities(back)).Concat(Entities(front)).Concat(Entities(tangent)).ToList();
                         try
                         {
                             var projected=Entities(back).Concat(Entities(front)).ToList();
-                            if(pass==0&&projected.Count==0)throw new InvalidOperationException("Ядро AutoCAD не вернуло проекцию тела.");
+                            Diagnostics.Step("Тело "+(i+1)+"/"+temporary.Count+", скрытые="+hidden+
+                                ": boundary="+(cut?.Length??0)+", fill="+(fill?.Length??0)+", background="+(back?.Length??0)+", foreground="+(front?.Length??0)+", tangent="+(tangent?.Length??0));
+                            if(pass==0&&projected.Count==0)
+                                throw new InvalidOperationException("Ядро AutoCAD не вернуло проекцию тела "+(i+1)+". Подробности в NPLOG.");
                             foreach(var e in projected)
                             {
                                 var ext=e.GeometricExtents;
@@ -275,9 +298,19 @@ namespace KotNode.AutoCAD
                         finally {foreach(var e in all)e.Dispose();}
                     }
                 }
-                ProjectionVisibility.Write(block,tr,db,bodies,edges,data.Hidden,PaperScale(data));
+                Diagnostics.Step("Взаимная видимость: кривых "+edges.Count);
+                ProjectionVisibility.Write(block,tr,db,temporary,edges,data.Hidden,PaperScale(data));
             }
-            finally {foreach(var edge in edges)edge.Curve.Dispose();section.Erase();}
+            finally
+            {
+                foreach(var edge in edges)edge.Curve.Dispose();
+                if(section!=null)
+                {
+                    if(section.ObjectId.IsNull)section.Dispose();
+                    else if(!section.IsErased)section.Erase();
+                }
+                foreach(var copy in temporary)if(!copy.IsErased)copy.Erase();
+            }
         }
         static ObjectId Build(Database db,Transaction tr,Dictionary<Guid,BlockReference> refs,ViewData data)
         {
