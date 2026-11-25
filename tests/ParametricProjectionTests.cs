@@ -67,13 +67,22 @@ static class ParametricProjectionTests
         Near(ArcSum(bigger,60),2*Math.PI,"parameter change recalculates outer radius");
         Near(ArcSum(bigger,50),2*Math.PI,"wall thickness retained on resize");
         var oblique=new RigidPlacement{AxisX=new Vector3(Math.Sqrt(.5),0,Math.Sqrt(.5)),AxisY=new Vector3(0,1,0)};
-        Rejected(()=>ParametricProjection.Build(longitudinal,oblique),"unsupported oblique view rejected explicitly");
+        Check(ParametricProjection.Build(longitudinal,oblique,false,true).Curves.Count>0,"oblique pipe view produces contours");
+        var rotated=Mark();rotated.AddPart(Plate(20,30,40),new RigidPlacement{Origin=new Vector3(0,0,-20),AxisX=new Vector3(Math.Sqrt(.5),Math.Sqrt(.5),0),AxisY=new Vector3(-Math.Sqrt(.5),Math.Sqrt(.5),0)});
+        var rotatedCut=ParametricProjection.Build(rotated,At(0,0,0),true);
+        Near(rotatedCut.Sections.Sum(Area),600,"rotated plate section has exact area");
+        Near(rotatedCut.Curves.Sum(Length),100,"rotated plate projected perimeter");
+        var coveredRotated=Mark();coveredRotated.AddPart(Plate(20,20,2),At(-10,-10,0));
+        coveredRotated.AddPart(Plate(100,100,2),new RigidPlacement{Origin=new Vector3(0,-70,10),AxisX=new Vector3(Math.Sqrt(.5),Math.Sqrt(.5),0),AxisY=new Vector3(-Math.Sqrt(.5),Math.Sqrt(.5),0)});
+        Check(ParametricProjection.Build(coveredRotated,At(0,0,0),false,true).Curves.Any(c=>c.Hidden),"rotated cover hides rear plate");
+        var obliqueCut=ParametricProjection.Build(longitudinal,new RigidPlacement{Origin=new Vector3(0,0,100),AxisX=oblique.AxisX,AxisY=oblique.AxisY},true);
+        Check(obliqueCut.Sections.Count==1&&obliqueCut.Sections[0].Loops.Count==2,"oblique pipe section retains bore");
         var bad=Mark();bad.AddPart(Plate(10,10,10),At(0,0,0));bad.AddPart(Plate(10,10,10),At(5,5,5));
         Rejected(()=>ParametricProjection.Build(bad,At(0,0,0)),"penetrating plates rejected");
         var intrusion=Mark();intrusion.AddPart(Pipe(),At(0,0,0));intrusion.AddPart(Plate(10,10,10),At(45,0,10));
         Rejected(()=>ParametricProjection.Build(intrusion,At(0,0,0)),"plate penetrating pipe wall rejected");
         var unsupported=Mark();unsupported.AddPart(new PartDefinition{Name="Криволинейный лист",Kind=PartKind.CurvedPlate,CurvedPlate=new CurvedPlateShape{InnerRadius=50,Thickness=10,Length=100,AngleRadians=1}},At(0,0,0));
-        Rejected(()=>ParametricProjection.Build(unsupported,At(0,0,0)),"unsupported shape rejected without partial output");
+        Check(ParametricProjection.Build(unsupported,At(0,0,0)).Curves.Count>0,"curved plate uses common spatial pipeline");
         Check(Json.Write(longitudinal)==sourceBefore,"projection leaves source parameters and identities unchanged");
         foreach(var frame in new[]{
             new RigidPlacement{AxisX=new Vector3(1,0,0),AxisY=new Vector3(0,-1,0)},

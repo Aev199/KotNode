@@ -277,6 +277,20 @@ namespace KotNode.Core
         }
         public static Result Build(AssemblyMark mark,RigidPlacement view,bool section=false,bool showHidden=false)
         {
+            mark.Validate();view.Validate();
+            bool aligned=true;
+            foreach(var instance in mark.Instances)
+            {
+                var part=mark.Parts.Single(p=>p.Id==instance.PartId);
+                if(part.Kind!=PartKind.Pipe&&part.Kind!=PartKind.RectangularPlate){aligned=false;break;}
+                try
+                {
+                    if(part.Kind==PartKind.Pipe)Axis(InFrame(instance.Placement.AxisX.Cross(instance.Placement.AxisY),view,true));
+                    else {Axis(InFrame(instance.Placement.AxisX,view,true));Axis(InFrame(instance.Placement.AxisY,view,true));}
+                }
+                catch(InvalidDataException){aligned=false;break;}
+            }
+            if(!aligned)return SpatialProjection.Build(mark,view,section,showHidden);
             var bodies=Bodies(mark,view);var edges=new List<Edge>();var result=new Result();
             foreach(var b in bodies)
             {
