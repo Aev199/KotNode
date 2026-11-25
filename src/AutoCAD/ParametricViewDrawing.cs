@@ -32,13 +32,20 @@ namespace KotNode.AutoCAD
             var block=new BlockTableRecord{Name="NA_PARAM_VIEW_"+Guid.NewGuid().ToString("N"),Units=UnitsValue.Millimeters};
             var id=table.Add(block);tr.AddNewlyCreatedDBObject(block,true);
             double scale=data.AnnotationScale>0?data.AnnotationScale:20;
+            var types=(LinetypeTable)tr.GetObject(db.LinetypeTableId,OpenMode.ForRead);
+            var dashed=types["NA_DASHED"];var continuous=types["Continuous"];
+            double period=((LinetypeTableRecord)tr.GetObject(dashed,OpenMode.ForRead)).PatternLength;
             foreach(var c in result.Curves)
                 using(var curve=Entity(c))
                 {
                     var curveId=AssemblyViews.StoreCurve(block,tr,db,curve,c.Hidden?AssemblyViews.HiddenLayer:c.Cut?AssemblyViews.CutLayer:AssemblyViews.VisibleLayer,c.Hidden?scale:1);
+                    var entity=(Entity)tr.GetObject(curveId,OpenMode.ForWrite);
+                    // Set the native linetype explicitly, even when existing DWG layers were customized.
+                    entity.LinetypeId=c.Hidden?dashed:continuous;
+                    double length=c.Circular?c.Radius*c.Sweep:Math.Sqrt((c.X1-c.X0)*(c.X1-c.X0)+(c.Y1-c.Y0)*(c.Y1-c.Y0));
+                    entity.LinetypeScale=c.Hidden?ViewLineOverrides.HiddenLineScale(length,scale,db.Ltscale,period):1;
                     if(ViewLineOverrides.HasSource(c))
                     {
-                        var entity=(Entity)tr.GetObject(curveId,OpenMode.ForWrite);
                         entity.CreateExtensionDictionary();
                         AssemblyDrawing.Write((DBDictionary)tr.GetObject(entity.ExtensionDictionary,OpenMode.ForRead),LineSourceTag,c,tr);
                     }

@@ -24,6 +24,53 @@ namespace KotNode.Core
             if(!HasSource(c))throw new InvalidDataException("Для линии пока нет устойчивой исходной кромки.");
             return new ViewLineOverride{InstanceId=c.InstanceId,SourceKey=c.SourceKey,From=whole?0:Math.Min(c.SourceFrom,c.SourceTo),To=whole?1:Math.Max(c.SourceFrom,c.SourceTo),Mode=mode,BatchId=batch};
         }
+        // Parameter on the selected displayed curve, not on the entire source edge.
+        public static double ParameterAt(ParametricProjection.Curve2 c,double x,double y)
+        {
+            if(c==null||!Guard.Finite(x)||!Guard.Finite(y))throw new InvalidDataException("Неверная точка линии.");
+            if(!c.Circular)
+            {
+                double dx=c.X1-c.X0,dy=c.Y1-c.Y0,d=dx*dx+dy*dy;
+                if(d<=E*E)throw new InvalidDataException("Вырожденная линия.");
+                return Math.Max(0,Math.Min(1,((x-c.X0)*dx+(y-c.Y0)*dy)/d));
+            }
+            if(c.Radius<=E||c.Sweep<=E)throw new InvalidDataException("Вырожденная дуга.");
+            if(Math.Abs(x-c.X0)+Math.Abs(y-c.Y0)<=E)
+                throw new InvalidDataException("Укажите точку на дуге, а не её центр.");
+            double tau=2*Math.PI,angle=Math.Atan2(y-c.Y0,x-c.X0)-c.Start;
+            angle=(angle%tau+tau)%tau;
+            if(angle<=c.Sweep+E)return Math.Min(1,angle/c.Sweep);
+            var a=c.At(0);var b=c.At(1);
+            double da=(x-a.X)*(x-a.X)+(y-a.Y)*(y-a.Y),db=(x-b.X)*(x-b.X)+(y-b.Y)*(y-b.Y);
+            return da<=db?0:1;
+        }
+        public static List<ViewLineOverride> CreateRange(ParametricProjection.Curve2 c,ViewLineMode mode,double a,double b,bool longerArc,Guid batch)
+        {
+            if(!HasSource(c)||!Guard.Finite(a)||!Guard.Finite(b)||a<0||a>1||b<0||b>1)
+                throw new InvalidDataException("Неверные границы корректировки.");
+            double lo=Math.Min(a,b),hi=Math.Max(a,b);
+            if(hi-lo<=E||(c.Circular&&c.Sweep>=2*Math.PI-E&&hi-lo>=1-E))
+                throw new InvalidDataException("Границы совпадают. Для всей линии используйте Segment или Edge.");
+            var result=new List<ViewLineOverride>();
+            Action<double,double> add=(u,v)=>{
+                if(v-u<=E)return;
+                double x=c.SourceFrom+(c.SourceTo-c.SourceFrom)*u,y=c.SourceFrom+(c.SourceTo-c.SourceFrom)*v;
+                var r=new ViewLineOverride{InstanceId=c.InstanceId,SourceKey=c.SourceKey,From=Math.Min(x,y),To=Math.Max(x,y),Mode=mode,BatchId=batch};
+                Validate(r);result.Add(r);
+            };
+            bool wrap=c.Circular&&c.Sweep>=2*Math.PI-E&&((hi-lo>.5)!=longerArc);
+            if(wrap){add(0,lo);add(hi,1);}
+            else add(lo,hi);
+            return result;
+        }
+        // Keep several dash cycles on short segments. No mutation of the drawing LTSCALE.
+        public static double HiddenLineScale(double length,double annotationScale,double globalScale,double patternLength)
+        {
+            if(!Guard.Finite(length)||length<=0||!Guard.Finite(annotationScale)||annotationScale<=0||
+                !Guard.Finite(globalScale)||globalScale<=0||!Guard.Finite(patternLength)||patternLength<=0)
+                throw new InvalidDataException("Некорректный масштаб штриховой линии.");
+            return Math.Min(annotationScale,length/(3*patternLength))/globalScale;
+        }
         public static void Validate(ViewLineOverride r)
         {
             if(r==null||r.InstanceId==Guid.Empty||string.IsNullOrWhiteSpace(r.SourceKey)||

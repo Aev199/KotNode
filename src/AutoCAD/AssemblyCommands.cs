@@ -570,11 +570,12 @@ namespace KotNode.AutoCAD
             var answer=ed.GetKeywords(action);
             if(answer.Status!=PromptStatus.OK&&answer.Status!=PromptStatus.None)return;
             var mode=answer.StringResult=="Visible"?ViewLineMode.Visible:answer.StringResult=="Suppress"?ViewLineMode.Suppressed:answer.StringResult=="Auto"?ViewLineMode.Auto:ViewLineMode.Hidden;
-            var scope=new PromptKeywordOptions("\nОбласть [Fragment/Edge] <Fragment>: "){AllowNone=true};
-            scope.Keywords.Add("Fragment");scope.Keywords.Add("Edge");scope.Keywords.Default="Fragment";
+            var scope=new PromptKeywordOptions("\nОбласть [Segment/Fragment/Edge] <Segment>: "){AllowNone=true};
+            foreach(var k in new[]{"Segment","Fragment","Edge"})scope.Keywords.Add(k);
+            scope.Keywords.Default="Segment";
             var chosen=ed.GetKeywords(scope);
             if(chosen.Status!=PromptStatus.OK&&chosen.Status!=PromptStatus.None)return;
-            bool whole=chosen.StringResult=="Edge";
+            bool whole=chosen.StringResult=="Edge",partial=chosen.StringResult=="Fragment";
             var batch=Guid.NewGuid();var rules=new List<ViewLineOverride>();var seen=new HashSet<ObjectId>();
             AssemblyViews.Entry selected=null;BlockReference child=null;
             while(true)
@@ -598,9 +599,39 @@ namespace KotNode.AutoCAD
                 var source=ParametricViewDrawing.Source(tr,entity);
                 if(!ViewLineOverrides.HasSource(source))
                 {ed.WriteMessage("\nДля этой линии пока нет устойчивой кромки.");continue;}
-                if(!seen.Add(hit.ObjectId))continue;
-                selected=entry;child=target;rules.Add(ViewLineOverrides.Create(source,mode,whole,batch));
-                ed.WriteMessage("\nВыбрано линий: "+rules.Count);
+                if(partial)
+                {
+                    var first=ed.GetPoint("\nПервая граница участка на выбранной линии: ");
+                    if(first.Status!=PromptStatus.OK)return;
+                    var second=ed.GetPoint("\nВторая граница участка на выбранной линии: ");
+                    if(second.Status!=PromptStatus.OK)return;
+                    var toLocal=entry.Reference.BlockTransform.Inverse();
+                    var u=first.Value.TransformBy(ed.CurrentUserCoordinateSystem).TransformBy(toLocal);
+                    var v=second.Value.TransformBy(ed.CurrentUserCoordinateSystem).TransformBy(toLocal);
+                    bool longer=false;
+                    if(source.Circular&&source.Sweep>=2*Math.PI-1e-10)
+                    {
+                        var arc=new PromptKeywordOptions("\nДуга между точками [Short/Long] <Short>: "){AllowNone=true};
+                        arc.Keywords.Add("Short");arc.Keywords.Add("Long");arc.Keywords.Default="Short";
+                        var pick=ed.GetKeywords(arc);
+                        if(pick.Status!=PromptStatus.OK&&pick.Status!=PromptStatus.None)return;
+                        longer=pick.StringResult=="Long";
+                    }
+                    try
+                    {
+                        var a=ViewLineOverrides.ParameterAt(source,u.X,u.Y);
+                        var b=ViewLineOverrides.ParameterAt(source,v.X,v.Y);
+                        rules.AddRange(ViewLineOverrides.CreateRange(source,mode,a,b,longer,batch));
+                    }
+                    catch(System.IO.InvalidDataException ex){ed.WriteMessage("\n"+ex.Message);continue;}
+                }
+                else
+                {
+                    if(!seen.Add(hit.ObjectId))continue;
+                    rules.Add(ViewLineOverrides.Create(source,mode,whole,batch));
+                }
+                selected=entry;child=target;
+                ed.WriteMessage("\nПодготовлено корректировок: "+rules.Count);
             }
             if(selected==null||rules.Count==0)return;
             if(selected.Data.LineOverrides==null)selected.Data.LineOverrides=new List<ViewLineOverride>();
