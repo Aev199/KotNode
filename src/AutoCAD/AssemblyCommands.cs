@@ -331,11 +331,28 @@ namespace KotNode.AutoCAD
         internal static RigidPlacement ViewFrame(Document doc,AssemblyMark mark,bool section)
         {
             var ed=doc.Editor;
-            var options=new PromptKeywordOptions("\nПлоскость представления [Top/Bottom/Front/Back/Right/Left/UCS] <Top>: ");
-            foreach(var keyword in new[]{"Top","Bottom","Front","Back","Right","Left","UCS"})options.Keywords.Add(keyword);
+            var options=new PromptKeywordOptions("\nПлоскость представления [Top/Bottom/Front/Back/Right/Left/UCS/ThreePoints] <Top>: ");
+            foreach(var keyword in new[]{"Top","Bottom","Front","Back","Right","Left","UCS","ThreePoints"})options.Keywords.Add(keyword);
             options.Keywords.Default="Top";options.AllowNone=true;
             var answer=ed.GetKeywords(options);
             if(answer.Status!=PromptStatus.OK&&answer.Status!=PromptStatus.None)return null;
+            if(answer.StringResult=="ThreePoints")
+            {
+                var points=new List<Vector3>();
+                foreach(var prompt in new[]{"\nНачало плоскости: ","\nТочка в направлении вправо (+X): ","\nТочка в верхней полуплоскости (+Y): "})
+                {
+                    var p=ed.GetPoint(prompt);
+                    if(p.Status!=PromptStatus.OK)return null;
+                    var w=p.Value.TransformBy(ed.CurrentUserCoordinateSystem);
+                    points.Add(new Vector3(w.X,w.Y,w.Z));
+                }
+                var frame3=RigidPlacement.FromThreePoints(points[0],points[1],points[2]);
+                var side=new PromptKeywordOptions("\nСторона наблюдения [Normal/Reverse] <Normal>: "){AllowNone=true};
+                side.Keywords.Add("Normal");side.Keywords.Add("Reverse");side.Keywords.Default="Normal";
+                var choice=ed.GetKeywords(side);
+                if(choice.Status!=PromptStatus.OK&&choice.Status!=PromptStatus.None)return null;
+                return choice.StringResult=="Reverse"?RigidPlacement.FromThreePoints(points[0],points[1],points[2],true):frame3;
+            }
             Vector3d x=Vector3d.XAxis,y=Vector3d.YAxis;
             switch(answer.StringResult)
             {

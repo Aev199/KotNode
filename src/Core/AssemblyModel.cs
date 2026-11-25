@@ -487,6 +487,23 @@ namespace KotNode.Core
             Guard.Require(Origin != null && AxisX != null && AxisY != null && Origin.IsFinite() && AxisX.IsFinite() && AxisY.IsFinite(), "Некорректные координаты детали.");
             Guard.Require(Math.Abs(AxisX.Dot(AxisX) - 1) <= eps && Math.Abs(AxisY.Dot(AxisY) - 1) <= eps && Math.Abs(AxisX.Dot(AxisY)) <= eps, "Оси должны быть ортонормированными.");
         }
+        public static RigidPlacement FromThreePoints(Vector3 origin,Vector3 right,Vector3 upper,bool reverse=false)
+        {
+            Guard.Require(origin!=null&&right!=null&&upper!=null&&origin.IsFinite()&&right.IsFinite()&&upper.IsFinite(),"Некорректные точки плоскости.");
+            var a=new Vector3(right.X-origin.X,right.Y-origin.Y,right.Z-origin.Z);
+            var b=new Vector3(upper.X-origin.X,upper.Y-origin.Y,upper.Z-origin.Z);
+            double l=Math.Sqrt(a.Dot(a)),m=Math.Sqrt(b.Dot(b));
+            Guard.Require(Guard.Finite(l)&&Guard.Finite(m)&&l>1e-6&&m>1e-6,"Точки плоскости должны различаться.");
+            var x=new Vector3(a.X/l,a.Y/l,a.Z/l);
+            var n=x.Cross(new Vector3(b.X/m,b.Y/m,b.Z/m));
+            double h=Math.Sqrt(n.Dot(n));
+            Guard.Require(Guard.Finite(h)&&h>1e-9&&m*h>1e-6,"Точки плоскости не должны лежать на одной прямой.");
+            var z=new Vector3(n.X/h,n.Y/h,n.Z/h);
+            var y=z.Cross(x);
+            if(reverse)y=new Vector3(-y.X,-y.Y,-y.Z);
+            var frame=new RigidPlacement{Origin=new Vector3(origin.X,origin.Y,origin.Z),AxisX=x,AxisY=y};
+            frame.Validate();return frame;
+        }
         public Vector3 ToWorld(Vector3 local)
         {
             Validate();

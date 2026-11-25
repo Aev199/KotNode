@@ -17,6 +17,18 @@ static class ParametricProjectionTests
     static void Rejected(Action action,string name){bool rejected=false;try{action();}catch(InvalidDataException){rejected=true;}Check(rejected,name);}
     internal static void Run()
     {
+        var a3=new Vector3(1000,2000,3000);
+        var b3=new Vector3(1010,2000,3010);
+        var c3=new Vector3(1005,2020,3005);
+        var frame3=RigidPlacement.FromThreePoints(a3,b3,c3);
+        Near(frame3.AxisX.X,Math.Sqrt(.5),"three point plane X");
+        Near(frame3.AxisX.Z,Math.Sqrt(.5),"three point plane inclination");
+        Near(frame3.AxisY.Y,1,"three point plane orthogonalization");
+        Near(frame3.ToWorld(new Vector3(0,0,1)).X-a3.X,-Math.Sqrt(.5),"observer normal");
+        var rev3=RigidPlacement.FromThreePoints(a3,b3,c3,true);
+        Near(rev3.ToWorld(new Vector3(0,0,1)).X-a3.X,Math.Sqrt(.5),"reverse observer normal");
+        Rejected(()=>RigidPlacement.FromThreePoints(a3,a3,c3),"coincident plane points rejected");
+        Rejected(()=>RigidPlacement.FromThreePoints(a3,b3,new Vector3(1020,2000,3020)),"collinear plane points rejected");
         var m=Mark();m.AddPart(Pipe(),At(0,0,0));
         var axial=ParametricProjection.Build(m,At(0,0,0),false,true);
         Check(axial.Curves.Count==2,"axial hollow pipe has two circular boundaries");
