@@ -23,7 +23,7 @@ namespace KotNode.AutoCAD
             public string Handle { get; set; }
         }
 
-        static T Read<T>(DBDictionary dict,string key,Transaction tr) where T:class
+        internal static T Read<T>(DBDictionary dict,string key,Transaction tr) where T:class
         {
             if(!dict.Contains(key))return null;
             var xr=(Xrecord)tr.GetObject(dict.GetAt(key),OpenMode.ForRead);
@@ -33,7 +33,7 @@ namespace KotNode.AutoCAD
                 return ModelJson.Read<T>(Encoding.UTF8.GetString(data.AsArray().Where(v=>v.TypeCode==310).SelectMany(v=>(byte[])v.Value).ToArray()));
             }
         }
-        static void Write<T>(DBDictionary dict,string key,T value,Transaction tr)
+        internal static void Write<T>(DBDictionary dict,string key,T value,Transaction tr)
         {
             if(!dict.IsWriteEnabled)dict.UpgradeOpen();
             Xrecord xr;
