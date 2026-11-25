@@ -115,6 +115,20 @@ namespace KotNode.Core
             Instances.Remove(FindInstance(instanceId));
         }
 
+        // Only definitions whose last instance disappeared are removed.
+        public int RemoveMissingInstances(IEnumerable<Guid> liveIds)
+        {
+            Validate();
+            if(liveIds==null)throw new ArgumentNullException(nameof(liveIds));
+            var live=new HashSet<Guid>(liveIds);
+            Guard.Require(live.All(id=>Instances.Any(i=>i.Id==id)), "Неизвестный экземпляр на чертеже.");
+            var removed=Instances.Where(i=>!live.Contains(i.Id)).ToList();
+            var affected=new HashSet<Guid>(removed.Select(i=>i.PartId));
+            Instances.RemoveAll(i=>!live.Contains(i.Id));
+            Parts.RemoveAll(p=>affected.Contains(p.Id)&&!Instances.Any(i=>i.PartId==p.Id));
+            return removed.Count;
+        }
+
         public void RemoveUnusedDefinition(Guid partId)
         {
             Validate();

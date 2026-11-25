@@ -93,7 +93,7 @@ namespace KotNode.AutoCAD
             return Matrix3d.AlignCoordinateSystem(Point3d.Origin,Vector3d.XAxis,Vector3d.YAxis,Vector3d.ZAxis,P(p.Origin),x,y,x.CrossProduct(y));
         }
         // Native MOVE/ROTATE are read back on the next constructor command.
-        // Ordinary COPY is detached; an erased managed reference must be restored with UNDO.
+        // Ordinary COPY is detached. Missing instances are reconciled on the next saved edit.
         internal static Dictionary<Guid,BlockReference> Synchronize(Database db,Transaction tr,AssemblyMark mark,bool restoreMissing=false)
         {
             var result=new Dictionary<Guid,BlockReference>();
@@ -108,15 +108,10 @@ namespace KotNode.AutoCAD
                 result.Add(tag.InstanceId,reference);
             }
             foreach(var instance in mark.Instances)
-            {
-                if(!result.TryGetValue(instance.Id,out var reference))
-                {
-                    if(!restoreMissing)
-                        throw new InvalidOperationException("Деталь удалена обычной командой. Восстановите её через UNDO или NAREPAIR.");
-                    continue;
-                }
-                instance.Placement=Placement(reference);
-            }
+                if(result.TryGetValue(instance.Id,out var reference))
+                    instance.Placement=Placement(reference);
+            if(!restoreMissing)
+                mark.RemoveMissingInstances(result.Keys);
             mark.Validate();
             if(restoreMissing)
             {

@@ -22,6 +22,7 @@ namespace KotNode.AutoCAD
         static System.Windows.Forms.TreeView tree;
         static Label treeStatus;
         static Document treeDocument;
+        static Document watchedDocument;
         static void Run(string command,Action<Document,Transaction> action)
         {
             Diagnostics.Begin(command);
@@ -165,29 +166,77 @@ namespace KotNode.AutoCAD
             AssemblyDrawing.Insert(doc.Database,tr,m,instance,geometry);
             AssemblyDrawing.Save(doc.Database,tr,m);
         }
-        static List<KotNode.Core.Point2> ReadRing(Polyline line,Matrix3d toLocal)
+        static List<Point3d> ReadContour(DBObject obj,Transaction tr)
         {
-            if(!line.Closed || line.NumberOfVertices<3)throw new InvalidOperationException("Требуется замкнутая плоская полилиния.");
-            var points=new List<KotNode.Core.Point2>();
-            for(int i=0;i<line.NumberOfVertices;i++)
+            var points=new List<Point3d>();
+            bool closed;
+            if(obj is Polyline line)
             {
-                if(Math.Abs(line.GetBulgeAt(i))>1e-12)throw new InvalidOperationException("Дуги контура пока не поддерживаются.");
-                var p=line.GetPoint3dAt(i).TransformBy(toLocal);
-                if(Math.Abs(p.Z)>1e-6)throw new InvalidOperationException("Контуры и отверстия должны лежать в одной плоскости, параллельной XY текущей ПСК.");
-                points.Add(new KotNode.Core.Point2(p.X,p.Y));
+                closed=line.Closed;
+                for(int i=0;i<line.NumberOfVertices;i++)
+                {
+                    if(Math.Abs(line.GetBulgeAt(i))>1e-12)throw new InvalidOperationException("Дуги внешнего контура пока не поддерживаются.");
+                    points.Add(line.GetPoint3dAt(i));
+                }
             }
+            else if(obj is Polyline2d old)
+            {
+                closed=old.Closed;
+                if(old.PolyType!=Poly2dType.SimplePoly)throw new InvalidOperationException("Сглаженная полилиния не поддерживается.");
+                foreach(ObjectId id in old)
+                {
+                    var vertex=(Vertex2d)tr.GetObject(id,OpenMode.ForRead);
+                    if(Math.Abs(vertex.Bulge)>1e-12)throw new InvalidOperationException("Дуги контура пока не поддерживаются.");
+                    points.Add(old.VertexPosition(vertex));
+                }
+            }
+            else if(obj is Polyline3d spatial)
+            {
+                closed=spatial.Closed;
+                if(spatial.PolyType!=Poly3dType.SimplePoly)throw new InvalidOperationException("Сглаженная полилиния не поддерживается.");
+                foreach(ObjectId id in spatial)points.Add(((PolylineVertex3d)tr.GetObject(id,OpenMode.ForRead)).Position);
+            }
+            else throw new InvalidOperationException("Контур: полилиния либо замкнутая цепочка отрезков. Выбран тип: "+obj.GetType().Name);
+            bool coincident=points.Count>1 && points[0].DistanceTo(points[points.Count-1])<1e-6;
+            if(coincident)points.RemoveAt(points.Count-1);
+            if((!closed&&!coincident)||points.Count<3)throw new InvalidOperationException("Контур не замкнут или содержит менее трёх вершин.");
             return points;
+        }
+        static List<Point3d> ReadOuter(ObjectId[] ids,Transaction tr)
+        {
+            if(ids.Length==1)return ReadContour(tr.GetObject(ids[0],OpenMode.ForRead),tr);
+            var segments=ids.Select(id=>tr.GetObject(id,OpenMode.ForRead) as Line).ToList();
+            if(segments.Count<3||segments.Any(l=>l==null))throw new InvalidOperationException("Выберите одну полилинию или все отрезки одного замкнутого контура.");
+            var points=new List<Point3d>{segments[0].StartPoint,segments[0].EndPoint};segments.RemoveAt(0);
+            while(segments.Count>0)
+            {
+                var tail=points[points.Count-1];
+                var next=segments.Where(l=>l.StartPoint.DistanceTo(tail)<1e-6||l.EndPoint.DistanceTo(tail)<1e-6).ToList();
+                if(next.Count!=1)throw new InvalidOperationException("Цепочка отрезков имеет разрыв или ветвление.");
+                var line=next[0];segments.Remove(line);
+                points.Add(line.StartPoint.DistanceTo(tail)<1e-6?line.EndPoint:line.StartPoint);
+            }
+            if(points[0].DistanceTo(points[points.Count-1])>=1e-6)throw new InvalidOperationException("Цепочка отрезков не замкнута.");
+            points.RemoveAt(points.Count-1);return points;
+        }
+        static List<KotNode.Core.Point2> ReadRing(List<Point3d> points,Matrix3d toLocal)
+        {
+            return points.Select(point=>{
+                var p=point.TransformBy(toLocal);
+                if(Math.Abs(p.Z)>1e-6)throw new InvalidOperationException("Контуры и отверстия должны лежать в одной плоскости, параллельной XY текущей ПСК.");
+                return new KotNode.Core.Point2(p.X,p.Y);
+            }).ToList();
         }
         [CommandMethod("NAPOLYPLATE",CommandFlags.Modal)]
         public void PolygonPlate()=>Run("NAPOLYPLATE",(doc,tr)=>{
             var m=Need(doc,tr);AssemblyDrawing.Synchronize(doc.Database,tr,m);
             var ed=doc.Editor;
-            var picked=ed.GetEntity("\nВыберите внешнюю замкнутую полилинию листа: ");
+            var picked=ed.GetSelection(new PromptSelectionOptions {MessageForAdding="\nВыберите внешнюю полилинию или все отрезки контура: "});
             if(picked.Status!=PromptStatus.OK)return;
-            var outer=tr.GetObject(picked.ObjectId,OpenMode.ForRead) as Polyline;
-            if(outer==null || outer.NumberOfVertices<3)throw new InvalidOperationException("Выберите замкнутую 2D полилинию.");
+            var outerIds=picked.Value.GetObjectIds();
+            var outer=ReadOuter(outerIds,tr);
             var ucs=ed.CurrentUserCoordinateSystem;
-            var origin=outer.GetPoint3dAt(0);
+            var origin=outer[0];
             var x=Vector3d.XAxis.TransformBy(ucs);var y=Vector3d.YAxis.TransformBy(ucs);var z=x.CrossProduct(y);
             var toLocal=Matrix3d.AlignCoordinateSystem(origin,x,y,z,Point3d.Origin,Vector3d.XAxis,Vector3d.YAxis,Vector3d.ZAxis);
             var p=new PolygonPlateShape {Thickness=12,Outer=ReadRing(outer,toLocal)};
@@ -201,9 +250,9 @@ namespace KotNode.AutoCAD
                 if(selection.Status!=PromptStatus.OK)return;
                 foreach(var id in selection.Value.GetObjectIds())
                 {
-                    if(id==picked.ObjectId)throw new InvalidOperationException("Внешний контур не может быть отверстием.");
+                    if(outerIds.Contains(id))throw new InvalidOperationException("Внешний контур не может быть отверстием.");
                     var e=tr.GetObject(id,OpenMode.ForRead);
-                    if(e is Polyline ring)p.Holes.Add(ReadRing(ring,toLocal));
+                    if(e is Polyline || e is Polyline2d || e is Polyline3d)p.Holes.Add(ReadRing(ReadContour(e,tr),toLocal));
                     else if(e is Circle circle)
                     {
                         var center=circle.Center.TransformBy(toLocal);
@@ -277,6 +326,7 @@ namespace KotNode.AutoCAD
                 {
                     var m=AssemblyDrawing.Load(doc.Database,tr);
                     if(m==null){treeStatus.Text="В текущем DWG нет марки.";return;}
+                    AssemblyDrawing.Synchronize(doc.Database,tr,m);
                     var root=tree.Nodes.Add(m.Code+" — "+m.Name);
                     System.Windows.Forms.TreeNode selected=null;
                     foreach(var part in m.Parts)
@@ -311,10 +361,30 @@ namespace KotNode.AutoCAD
             catch(System.Exception ex){treeStatus.Text="Не удалось обновить состав: "+ex.Message;}
             finally{tree.EndUpdate();}
         }
+        static void Watch(Document doc)
+        {
+            if(watchedDocument==doc)return;
+            if(watchedDocument!=null)watchedDocument.CommandEnded-=NativeEnded;
+            watchedDocument=doc;
+            if(doc!=null)doc.CommandEnded+=NativeEnded;
+        }
+        static void NativeEnded(object sender,CommandEventArgs args)
+        {
+            var doc=sender as Document;
+            if(doc==null || doc!=AcApp.DocumentManager.MdiActiveDocument || palette==null || !palette.Visible)return;
+            string name=(args.GlobalCommandName??"").ToUpperInvariant();
+            if(name=="ERASE"||name=="U"||name=="UNDO"||name=="REDO"||name=="OOPS"||name=="MOVE"||name=="ROTATE"||name=="ROTATE3D"||name=="EXPLODE")
+                RefreshTree(doc);
+        }
         static void Queue(string command)
             =>AcApp.DocumentManager.MdiActiveDocument?.SendStringToExecute(command+"\n",true,false,false);
         [CommandMethod("NAREFRESH",CommandFlags.Modal)]
-        public void Refresh()=>Run("NAREFRESH",(doc,tr)=>{});
+        public void Refresh()=>Run("NAREFRESH",(doc,tr)=>{
+            var m=AssemblyDrawing.Load(doc.Database,tr);if(m==null)return;
+            var before=m.Instances.Count;
+            AssemblyDrawing.Synchronize(doc.Database,tr,m);
+            if(before!=m.Instances.Count)AssemblyDrawing.Save(doc.Database,tr,m);
+        });
         [CommandMethod("NASELECT",CommandFlags.Modal|CommandFlags.UsePickSet)]
         public void SelectInDrawing()=>Run("NASELECT",(doc,tr)=>{
             var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
@@ -366,9 +436,10 @@ namespace KotNode.AutoCAD
                 palette.Add("Конструктор",layout);
                 AcApp.DocumentManager.DocumentActivated+=(s,e)=>{
                     if(tree!=null){tree.Nodes.Clear();treeDocument=null;treeStatus.Text="Обновите дерево для текущего DWG.";}
+                    Watch(e.Document);
                 };
             }
-            var doc=AcApp.DocumentManager.MdiActiveDocument;if(doc!=null)RefreshTree(doc);
+            var doc=AcApp.DocumentManager.MdiActiveDocument;Watch(doc);if(doc!=null)RefreshTree(doc);
             palette.Visible=true;
         }
         [CommandMethod("NANEW",CommandFlags.Modal)]
