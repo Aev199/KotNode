@@ -131,6 +131,39 @@ namespace KotNode.AutoCAD
             }
             return result;
         }
+        static string AuxPrefix(AssemblyMark mark)=>"NA_AUX_"+mark.Id.ToString("N")+"_";
+        internal static List<Tuple<string,ObjectId[]>> AuxiliaryGroups(Database db,Transaction tr,AssemblyMark mark)
+        {
+            var result=new List<Tuple<string,ObjectId[]>>();
+            var dict=(DBDictionary)tr.GetObject(db.GroupDictionaryId,OpenMode.ForRead);
+            foreach(DBDictionaryEntry item in dict)
+            {
+                if(!item.Key.StartsWith(AuxPrefix(mark),StringComparison.OrdinalIgnoreCase))continue;
+                var group=(Group)tr.GetObject(item.Value,OpenMode.ForRead);
+                result.Add(Tuple.Create(item.Key,group.GetAllEntityIds().Where(id=>!id.IsErased).ToArray()));
+            }
+            return result;
+        }
+        internal static void AddAuxiliary(Database db,Transaction tr,AssemblyMark mark,ObjectId[] ids)
+        {
+            if(ids.Length==0)throw new InvalidOperationException("Не выбрана вспомогательная графика.");
+            var existing=new HashSet<ObjectId>(AuxiliaryGroups(db,tr,mark).SelectMany(g=>g.Item2));
+            var space=ModelSpace(db,tr);
+            foreach(var id in ids)
+            {
+                var entity=tr.GetObject(id,OpenMode.ForRead) as Entity;
+                if(entity==null||entity.OwnerId!=space.ObjectId||existing.Contains(id))
+                    throw new InvalidOperationException("Объект уже входит во вспомогательный чертёж или находится вне модели.");
+                if(entity is BlockReference block && !block.ExtensionDictionary.IsNull &&
+                   ((DBDictionary)tr.GetObject(block.ExtensionDictionary,OpenMode.ForRead)).Contains(PartKey))
+                    throw new InvalidOperationException("Управляемую деталь нельзя включить во вспомогательную графику.");
+            }
+            var dict=(DBDictionary)tr.GetObject(db.GroupDictionaryId,OpenMode.ForWrite);
+            var group=new Group("Вспомогательная графика "+mark.Code,true);
+            dict.SetAt(AuxPrefix(mark)+Guid.NewGuid().ToString("N"),group);
+            tr.AddNewlyCreatedDBObject(group,true);
+            group.Append(new ObjectIdCollection(ids));
+        }
         static Region MakeRegion(Curve curve)
         {
             using(curve)

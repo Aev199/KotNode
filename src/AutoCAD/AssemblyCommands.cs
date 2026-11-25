@@ -19,6 +19,9 @@ namespace KotNode.AutoCAD
     public sealed class AssemblyCommands
     {
         static PaletteSet palette;
+        static System.Windows.Forms.TreeView tree;
+        static Label treeStatus;
+        static Document treeDocument;
         static void Run(string command,Action<Document,Transaction> action)
         {
             Diagnostics.Begin(command);
@@ -34,6 +37,7 @@ namespace KotNode.AutoCAD
                     tr.Commit();
                 }
                 doc.Editor.Regen();
+                RefreshTree(doc);
             }
             catch(System.Exception ex)
             {
@@ -261,24 +265,110 @@ namespace KotNode.AutoCAD
             var at=new RigidPlacement {Origin=new Vector3(origin.X,origin.Y,origin.Z),AxisX=new Vector3(x.X,x.Y,x.Z),AxisY=new Vector3(y.X,y.Y,y.Z)};
             AddPrepared(doc,tr,m,part,at);
         });
+        static void RefreshTree(Document doc)
+        {
+            if(tree==null)return;
+            try
+            {
+                tree.BeginUpdate();
+                string previous=treeDocument==doc?tree.SelectedNode?.Tag as string:null;
+                tree.Nodes.Clear();treeDocument=doc;
+                using(var tr=doc.Database.TransactionManager.StartTransaction())
+                {
+                    var m=AssemblyDrawing.Load(doc.Database,tr);
+                    if(m==null){treeStatus.Text="В текущем DWG нет марки.";return;}
+                    var root=tree.Nodes.Add(m.Code+" — "+m.Name);
+                    System.Windows.Forms.TreeNode selected=null;
+                    foreach(var part in m.Parts)
+                    {
+                        var instances=m.Instances.Where(i=>i.PartId==part.Id).ToList();
+                        var node=root.Nodes.Add((part.IncludeInSpec?"Поз. "+part.Position+" • ":"[Справ.] ")+part.Name+" × "+instances.Count);
+                        node.Tag=part.Id.ToString("D");
+                        node.ToolTipText=part.Material+" | "+part.UnitMassKg().ToString("0.###")+" кг/шт.";
+                        if((string)node.Tag==previous)selected=node;
+                        for(int i=0;i<instances.Count;i++)
+                        {
+                            var child=node.Nodes.Add("Экземпляр "+(i+1));child.Tag=instances[i].Id.ToString("D");
+                            if((string)child.Tag==previous)selected=child;
+                        }
+                    }
+                    var groups=AssemblyDrawing.AuxiliaryGroups(doc.Database,tr,m);
+                    if(groups.Count>0)
+                    {
+                        var aux=root.Nodes.Add("Вспомогательные чертежи");
+                        for(int i=0;i<groups.Count;i++)
+                        {
+                            var node=aux.Nodes.Add("Чертёж "+(i+1)+" • "+groups[i].Item2.Length+" объектов");
+                            node.Tag=groups[i].Item1;
+                            if((string)node.Tag==previous)selected=node;
+                        }
+                    }
+                    root.Expand();if(selected!=null){selected.EnsureVisible();tree.SelectedNode=selected;}
+                    treeStatus.Text="Деталей: "+m.Instances.Count+" | В спецификации: "+m.Specification().Sum(r=>r.TotalMassKg).ToString("0.###")+" кг";
+                    tr.Commit();
+                }
+            }
+            catch(System.Exception ex){treeStatus.Text="Не удалось обновить состав: "+ex.Message;}
+            finally{tree.EndUpdate();}
+        }
+        static void Queue(string command)
+            =>AcApp.DocumentManager.MdiActiveDocument?.SendStringToExecute(command+"\n",true,false,false);
+        [CommandMethod("NAREFRESH",CommandFlags.Modal)]
+        public void Refresh()=>Run("NAREFRESH",(doc,tr)=>{});
+        [CommandMethod("NASELECT",CommandFlags.Modal|CommandFlags.UsePickSet)]
+        public void SelectInDrawing()=>Run("NASELECT",(doc,tr)=>{
+            var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
+            var key=Text(doc.Editor,"Идентификатор детали или вспомогательного чертежа: ");if(key==null)return;
+            ObjectId[] ids;
+            if(Guid.TryParse(key,out var id))
+                ids=m.Instances.Where(i=>i.Id==id||i.PartId==id).Select(i=>refs[i.Id].ObjectId).ToArray();
+            else
+            {
+                var aux=AssemblyDrawing.AuxiliaryGroups(doc.Database,tr,m).SingleOrDefault(g=>g.Item1==key);
+                ids=aux==null?new ObjectId[0]:aux.Item2;
+            }
+            if(ids.Length==0)throw new InvalidOperationException("В текущей марке объект не найден.");
+            doc.Editor.SetImpliedSelection(ids);
+        });
+        [CommandMethod("NAAUX",CommandFlags.Modal)]
+        public void Auxiliary()=>Run("NAAUX",(doc,tr)=>{
+            var m=Need(doc,tr);AssemblyDrawing.Synchronize(doc.Database,tr,m);
+            var selected=doc.Editor.GetSelection(new PromptSelectionOptions {MessageForAdding="\nВыберите вспомогательные примитивы AutoCAD: "});
+            if(selected.Status!=PromptStatus.OK)return;
+            AssemblyDrawing.AddAuxiliary(doc.Database,tr,m,selected.Value.GetObjectIds());
+            doc.Editor.WriteMessage("\nВспомогательная графика добавлена в состав марки без учёта массы.");
+        });
         [CommandMethod("NACONSTRUCTOR",CommandFlags.Modal)]
         public void Open()
         {
             if(palette==null)
             {
-                var panel=new FlowLayoutPanel {Dock=DockStyle.Fill,AutoScroll=true,FlowDirection=System.Windows.Forms.FlowDirection.TopDown,WrapContents=false,Padding=new Padding(8)};
-                panel.Controls.Add(new Label {Text="Экспериментальный конструктор\nОдна марка на DWG • модель 1:1",AutoSize=true});
-                foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Добавить трубу","NAPIPE"},new[]{"Добавить лист","NAPLATE"},new[]{"Лист по контуру","NAPOLYPLATE"},new[]{"Криволинейный лист","NACURVED"},new[]{"Двутавр","NABEAM"},new[]{"Арматурный стержень","NAREBAR"},new[]{"Свойства детали","NAEDIT"},new[]{"Копировать экземпляр","NACOPY"},new[]{"Отделить позицию","NADETACH"},new[]{"Удалить экземпляр","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"},new[]{"Восстановить удалённое","NAREPAIR"}})
+                var layout=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=1,RowCount=4,Padding=new Padding(5)};
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));layout.RowStyles.Add(new RowStyle(SizeType.Percent,100));
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                var header=new Label {Text="Конструктор • одна марка на DWG",AutoSize=true};layout.Controls.Add(header,0,0);
+                tree=new System.Windows.Forms.TreeView {Dock=DockStyle.Fill,HideSelection=false,ShowNodeToolTips=true};layout.Controls.Add(tree,0,1);
+                treeStatus=new Label {AutoSize=true,MaximumSize=new Size(300,0)};layout.Controls.Add(treeStatus,0,2);
+                var panel=new FlowLayoutPanel {Dock=DockStyle.Fill,AutoSize=true,FlowDirection=System.Windows.Forms.FlowDirection.LeftToRight,WrapContents=true,Padding=new Padding(1)};
+                foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Труба","NAPIPE"},new[]{"Лист","NAPLATE"},new[]{"Лист по контуру","NAPOLYPLATE"},new[]{"Кривой лист","NACURVED"},new[]{"Двутавр","NABEAM"},new[]{"Арматура","NAREBAR"},new[]{"Вспом. чертёж","NAAUX"},new[]{"Свойства","NAEDIT"},new[]{"Копировать","NACOPY"},new[]{"Отделить","NADETACH"},new[]{"Удалить","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"},new[]{"Восстановить","NAREPAIR"},new[]{"Обновить дерево","NAREFRESH"}})
                 {
-                    var cmd=pair[1];
-                    var button=new Button {Text=pair[0],Width=210,Height=32};
-                    button.Click+=(s,e)=>AcApp.DocumentManager.MdiActiveDocument?.SendStringToExecute(cmd+"\n",true,false,false);
-                    panel.Controls.Add(button);
+                    var cmd=pair[1];var button=new Button {Text=pair[0],AutoSize=true};
+                    button.Click+=(s,e)=>Queue(cmd);panel.Controls.Add(button);
                 }
-                panel.Controls.Add(new Label {Text="MOVE / ROTATE → NASYNC\nCOPY и ERASE — только через команды NA.",AutoSize=true});
-                palette=new PaletteSet("Узлы — конструктор",new Guid("e51c3c38-b277-4753-9b27-03ed12d5c50f")){Size=new Size(270,460),MinimumSize=new Size(240,300),Style=PaletteSetStyles.ShowCloseButton|PaletteSetStyles.ShowAutoHideButton};
-                palette.Add("Конструктор",panel);
+                var select=new Button {Text="Выбрать на чертеже",AutoSize=true};
+                Action pick=()=>{
+                    if(treeDocument!=AcApp.DocumentManager.MdiActiveDocument){Queue("NAREFRESH");return;}
+                    if(tree.SelectedNode?.Tag is string key)Queue("NASELECT "+key);
+                };
+                select.Click+=(s,e)=>pick();tree.NodeMouseDoubleClick+=(s,e)=>pick();panel.Controls.Add(select);
+                layout.Controls.Add(panel,0,3);
+                palette=new PaletteSet("Узлы — конструктор",new Guid("e51c3c38-b277-4753-9b27-03ed12d5c50f")){Size=new Size(340,650),MinimumSize=new Size(300,420),Style=PaletteSetStyles.ShowCloseButton|PaletteSetStyles.ShowAutoHideButton};
+                palette.Add("Конструктор",layout);
+                AcApp.DocumentManager.DocumentActivated+=(s,e)=>{
+                    if(tree!=null){tree.Nodes.Clear();treeDocument=null;treeStatus.Text="Обновите дерево для текущего DWG.";}
+                };
             }
+            var doc=AcApp.DocumentManager.MdiActiveDocument;if(doc!=null)RefreshTree(doc);
             palette.Visible=true;
         }
         [CommandMethod("NANEW",CommandFlags.Modal)]
