@@ -1,0 +1,51 @@
+
+  Restored /workspace/scratch/a495713d96fb/work/KotNode-Project-0.2.1/src/Core/KotNode.Core.csproj (in 19.53 sec).
+  Restored /workspace/scratch/a495713d96fb/work/KotNode-Project-0.2.1/src/AutoCAD/KotNode.AutoCAD.csproj (in 19.53 sec).
+  KotNode.Core -> /workspace/scratch/a495713d96fb/work/KotNode-Project-0.2.1/src/Core/bin/Release/net48/KotNode.Core.dll
+  KotNode.AutoCAD -> /workspace/scratch/a495713d96fb/work/KotNode-Project-0.2.1/src/AutoCAD/bin/Release/net48/KotNode.AutoCAD.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:22.13
+
+  Determining projects to restore...
+  Restored /workspace/scratch/a495713d96fb/work/KotNode-Project-0.2.1/tests/KotNode.Tests.csproj (in 89 ms).
+  1 of 2 projects are up-to-date for restore.
+  KotNode.Core -> /workspace/scratch/a495713d96fb/work/KotNode-Project-0.2.1/src/Core/bin/Release/net8.0/KotNode.Core.dll
+  KotNode.Tests -> /workspace/scratch/a495713d96fb/work/KotNode-Project-0.2.1/tests/bin/Release/net8.0/KotNode.Tests.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:04.75
+
+PASS clear spacing solved
+PASS sector volume and kg conversion
+PASS drawing mark alone adds no steel
+PASS draft excluded and quantity multiplied
+PASS project and scope totals
+PASS unrounded total
+PASS butt weld closes gap without changing saved input
+PASS two plates with impossible small gap rejected
+PASS two plate boundary case
+PASS twelve plate boundary case
+PASS JSON roundtrip identity
+PASS impossible spacing rejected
+PASS NaN rejected
+PASS orphan use rejected
+PASS duplicate mark rejected
+PASS future schema rejected
+PASS first atomic save
+PASS concurrent edit protected
+PASS conflict does not overwrite winner
+PASS backup previous revision
+PASS exclusive lock respected
+PASS CSV scoped source quantities
+22 core checks passed
+Table null-return regression + diagnostics: 9 checks passed (API double, no native AutoCAD)
+Drafting: 112 LISP geometry cases, 56 full layouts; 97550 assertions passed
+
+Native AutoCAD: not executed. See HOTFIX-0.2.1.md.
