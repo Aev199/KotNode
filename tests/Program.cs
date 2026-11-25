@@ -47,6 +47,12 @@ class Program
    Check(Report.Csv(p,"Ярус 1").Split(new[]{"\r\n","\n"},StringSplitOptions.None)[1].Split(';')[5]=="96","CSV scoped source quantities");
   } finally { Directory.Delete(dir,true); }
   Console.WriteLine(checks+" core checks passed");
+  var stampA=ViewGeometryStamp.Compute(new[]{"edge1","edge2"});
+  Check(stampA==ViewGeometryStamp.Compute(new[]{"edge2","edge1"}),"view inventory stamp order independent");
+  Check(stampA!=ViewGeometryStamp.Compute(new[]{"edge1"}),"view inventory deletion detected");
+  Check(stampA!=ViewGeometryStamp.Compute(new[]{"edge1","edge2","edge2"}),"view inventory duplicate detected");
+  Check(ViewGeometryStamp.Record("ab","c")!=ViewGeometryStamp.Record("a","bc"),"view stamp field delimiters unambiguous");
+  Check(ViewGeometryStamp.Record((string)null)!=ViewGeometryStamp.Record(""),"view stamp null distinct");
   ParametricProjectionTests.Run();
   SectionHatchBoundaryTests.Run();
   TableMergeTests.Run();

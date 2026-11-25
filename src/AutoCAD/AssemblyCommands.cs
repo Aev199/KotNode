@@ -511,6 +511,8 @@ namespace KotNode.AutoCAD
             if(entry==null)throw new InvalidOperationException("Выберите представление марки.");
             var data=entry.Data;
             if(data.ManualSnapshot)throw new InvalidOperationException("Старый снимок не связан с параметрами. Создайте новый вид командой NAVIEW или NASECTION.");
+            if(string.IsNullOrEmpty(data.GeneratedChildHandle))
+                throw new InvalidOperationException("Сначала переведите старый вид командой NAMIGRATEVIEW.");
             using(var form=new Fields("Свойства представления"))
             {
                 form.TextField("Название","name",data.Name);
@@ -561,7 +563,25 @@ namespace KotNode.AutoCAD
             var count=AssemblyViews.Update(doc.Database,tr,m,refs);
             if(count>0)AssemblyDrawing.Save(doc.Database,tr,m);
             var manual=AssemblyViews.Find(doc.Database,tr,m).Count(e=>e.Data.ManualSnapshot);
-            doc.Editor.WriteMessage("\nАвтоматически обновлено: "+count+"; старых несвязанных снимков (создайте вместо них параметрические виды): "+manual);
+            var legacy=AssemblyViews.Find(doc.Database,tr,m).Count(e=>!e.Data.ManualSnapshot&&string.IsNullOrEmpty(e.Data.GeneratedChildHandle));
+            doc.Editor.WriteMessage("\nАвтоматически обновлено: "+count+"; старых снимков: "+manual+"; видов старого формата (NAMIGRATEVIEW): "+legacy);
+        });
+        [CommandMethod("NAMIGRATEVIEW",CommandFlags.Modal)]
+        public void MigrateView()=>Run("NAMIGRATEVIEW",(doc,tr)=>{
+            var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
+            var picked=doc.Editor.GetEntity("\nВыберите старый автоматически построенный вид: ");
+            if(picked.Status!=PromptStatus.OK)return;
+            var entry=AssemblyViews.Find(doc.Database,tr,m).SingleOrDefault(e=>e.Reference.ObjectId==picked.ObjectId);
+            if(entry==null||entry.Data.ManualSnapshot||!string.IsNullOrEmpty(entry.Data.GeneratedChildHandle))
+                throw new InvalidOperationException("Требуется автоматически построенный вид старого формата.");
+            var p=doc.Editor.GetPoint("\nТочка размещения резервной копии старого вида: ");
+            if(p.Status!=PromptStatus.OK)return;
+            var at=p.Value.TransformBy(doc.Editor.CurrentUserCoordinateSystem);
+            if(entry.Reference.Position.DistanceTo(new Point3d(at.X,at.Y,0))<1e-6)
+                throw new InvalidOperationException("Разместите резервную копию отдельно от исходного вида.");
+            AssemblyViews.Migrate(doc.Database,tr,m,refs,entry,at);
+            AssemblyDrawing.Save(doc.Database,tr,m);
+            doc.Editor.WriteMessage("\nВид переведён в новый формат. Старое оформление сохранено в отдельном блоке; перенесите нужную графику во внешний блок вида.");
         });
         [CommandMethod("NAUPDATEVIEW",CommandFlags.Modal)]
         public void UpdateView()=>Run("NAUPDATEVIEW",(doc,tr)=>{
@@ -609,7 +629,7 @@ namespace KotNode.AutoCAD
                         foreach(var view in views)
                         {
                             var stale=AssemblyViews.IsStale(view.Data,hash);
-                            var node=branch.Nodes.Add((view.Data.FullCut?"Разрез: ":view.Data.IsSection?"Сечение: ":"Вид: ")+view.Data.Name+(view.Data.ManualSnapshot?" [FLATSHOT]":"")+(stale?" [обновить]":""));
+                            var node=branch.Nodes.Add((view.Data.FullCut?"Разрез: ":view.Data.IsSection?"Сечение: ":"Вид: ")+view.Data.Name+(view.Data.ManualSnapshot?" [FLATSHOT]":string.IsNullOrEmpty(view.Data.GeneratedChildHandle)?" [старый формат]":"")+(stale?" [обновить]":""));
                             node.Tag=view.Data.Id.ToString("D");
                             node.ToolTipText=(stale?"Требуется перестроение. ":"Представление актуально. ")+"Масштаб оформления 1:"+(view.Data.AnnotationScale>0?view.Data.AnnotationScale:20);
                             if((string)node.Tag==previous)selected=node;
@@ -733,7 +753,7 @@ namespace KotNode.AutoCAD
                 tree=new System.Windows.Forms.TreeView {Dock=DockStyle.Fill,HideSelection=false,ShowNodeToolTips=true};layout.Controls.Add(tree,0,1);
                 treeStatus=new Label {AutoSize=true,MaximumSize=new Size(300,0)};layout.Controls.Add(treeStatus,0,2);
                 var panel=new FlowLayoutPanel {Dock=DockStyle.Fill,AutoSize=true,FlowDirection=System.Windows.Forms.FlowDirection.LeftToRight,WrapContents=true,Padding=new Padding(1)};
-                foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Труба","NAPIPE"},new[]{"Лист","NAPLATE"},new[]{"Лист по контуру","NAPOLYPLATE"},new[]{"Кривой лист","NACURVED"},new[]{"Двутавр","NABEAM"},new[]{"Арматура","NAREBAR"},new[]{"Вспом. чертёж","NAAUX"},new[]{"Создать вид","NAVIEW"},new[]{"Создать разрез","NASECTION"},new[]{"Чистое сечение","NACROSS"},new[]{"Свойства вида","NAEDITVIEW"},new[]{"Обновить вид","NAUPDATEVIEW"},new[]{"Обновить виды","NAUPDATEVIEWS"},new[]{"Свойства","NAEDIT"},new[]{"Копировать","NACOPY"},new[]{"Линейный массив","NAARRAY"},new[]{"Отделить","NADETACH"},new[]{"Удалить","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"},new[]{"Восстановить","NAREPAIR"},new[]{"Обновить дерево","NAREFRESH"}})
+                foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Труба","NAPIPE"},new[]{"Лист","NAPLATE"},new[]{"Лист по контуру","NAPOLYPLATE"},new[]{"Кривой лист","NACURVED"},new[]{"Двутавр","NABEAM"},new[]{"Арматура","NAREBAR"},new[]{"Вспом. чертёж","NAAUX"},new[]{"Создать вид","NAVIEW"},new[]{"Создать разрез","NASECTION"},new[]{"Чистое сечение","NACROSS"},new[]{"Свойства вида","NAEDITVIEW"},new[]{"Перевести старый вид","NAMIGRATEVIEW"},new[]{"Обновить вид","NAUPDATEVIEW"},new[]{"Обновить виды","NAUPDATEVIEWS"},new[]{"Свойства","NAEDIT"},new[]{"Копировать","NACOPY"},new[]{"Линейный массив","NAARRAY"},new[]{"Отделить","NADETACH"},new[]{"Удалить","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"},new[]{"Восстановить","NAREPAIR"},new[]{"Обновить дерево","NAREFRESH"}})
                 {
                     var cmd=pair[1];var button=new Button {Text=pair[0],AutoSize=true};
                     button.Click+=(s,e)=>Queue(cmd);panel.Controls.Add(button);

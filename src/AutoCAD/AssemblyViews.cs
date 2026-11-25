@@ -16,7 +16,7 @@ namespace KotNode.AutoCAD
     public static class AssemblyViews
     {
         internal const string Key="KOTNODE_VIEW_1";
-        internal const int Revision=11;
+        internal const int Revision=12;
         internal const string VisibleLayer="NA_VISIBLE",HiddenLayer="NA_HIDDEN",CutLayer="NA_CUT",HatchLayer="NA_HATCH";
         static double PaperScale(ViewData d)=>d.AnnotationScale>0?d.AnnotationScale:20;
         static void Layers(Database db,Transaction tr)
@@ -61,6 +61,9 @@ namespace KotNode.AutoCAD
             public RigidPlacement RelativeFrame { get; set; }
             public string SourceHash { get; set; }
             public string Handle { get; set; }
+            // Stable wrapper contains user graphics; only its marked child is regenerated.
+            public string GeneratedChildHandle { get; set; }
+            public string GeneratedStamp { get; set; }
         }
         internal sealed class Entry
         {
@@ -353,7 +356,8 @@ namespace KotNode.AutoCAD
         {
             data.MarkId=mark.Id;data.SourceHash=Signature(mark);data.GeneratorRevision=Revision;
             var geometry=Build(db,tr,mark,refs,data);
-            var reference=new BlockReference(new Point3d(location.X,location.Y,0),geometry);
+            var shell=ViewShell.Create(db,tr,geometry,data);
+            var reference=new BlockReference(new Point3d(location.X,location.Y,0),shell);
             reference.SetDatabaseDefaults(db);
             var space=AssemblyDrawing.ModelSpace(db,tr,OpenMode.ForWrite);
             space.AppendEntity(reference);tr.AddNewlyCreatedDBObject(reference,true);
@@ -448,11 +452,37 @@ namespace KotNode.AutoCAD
         internal static void Rebuild(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs,Entry entry)
         {
             if(entry.Data.ManualSnapshot)throw new InvalidOperationException("Старый снимок не связан с параметрами. Создайте новый вид командой NAVIEW или NASECTION.");
+            if(string.IsNullOrEmpty(entry.Data.GeneratedChildHandle))
+                throw new InvalidOperationException("Вид старого формата. Выполните NAMIGRATEVIEW с резервной копией; правки не будут перенесены автоматически.");
+            var child=ViewShell.RequireUnchanged(tr,entry);
             if(!entry.Data.IsSection||entry.Data.FullCut)entry.Data.ParametricPrototype=true;
             var geometry=Build(db,tr,mark,refs,entry.Data);
-            AssemblyDrawing.Replace(entry.Reference,geometry);
+            AssemblyDrawing.Replace(child,geometry);
+            entry.Data.GeneratedStamp=ViewShell.Stamp(tr,geometry);
             entry.Data.SourceHash=Signature(mark);entry.Data.GeneratorRevision=Revision;entry.Data.ManualSnapshot=false;
             Save(entry.Reference,tr,entry.Data);
+        }
+        internal static void Migrate(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs,Entry entry,Point3d backupAt)
+        {
+            if(entry.Data.ManualSnapshot||!string.IsNullOrEmpty(entry.Data.GeneratedChildHandle))
+                throw new InvalidOperationException("Переход доступен только старым автоматически построенным видам.");
+            // Preserve a referenced copy of the entire legacy definition, including manual edits.
+            // It is deliberately not tagged as a live managed view.
+            var original=entry.Reference;
+            var backup=new BlockReference(Point3d.Origin,original.BlockTableRecord);
+            backup.SetDatabaseDefaults(db);
+            backup.TransformBy(original.BlockTransform);
+            backup.Position=new Point3d(backupAt.X,backupAt.Y,0);
+            backup.Layer=original.Layer;
+            AssemblyDrawing.ModelSpace(db,tr,OpenMode.ForWrite).AppendEntity(backup);
+            tr.AddNewlyCreatedDBObject(backup,true);
+            if(!entry.Data.IsSection||entry.Data.FullCut)entry.Data.ParametricPrototype=true;
+            var geometry=Build(db,tr,mark,refs,entry.Data);
+            var shell=ViewShell.Create(db,tr,geometry,entry.Data);
+            AssemblyDrawing.Replace(original,shell);
+            entry.Data.SourceHash=Signature(mark);
+            entry.Data.GeneratorRevision=Revision;
+            Save(original,tr,entry.Data);
         }
         internal static int Update(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs,Guid? only=null)
         {
@@ -466,6 +496,7 @@ namespace KotNode.AutoCAD
                     if(only.HasValue)throw new InvalidOperationException("Старый несвязанный снимок. Создайте новый вид командой NAVIEW или NASECTION.");
                     continue;
                 }
+                if(string.IsNullOrEmpty(entry.Data.GeneratedChildHandle)&&!only.HasValue)continue;
                 Rebuild(db,tr,mark,refs,entry);count++;
             }
             return count;
