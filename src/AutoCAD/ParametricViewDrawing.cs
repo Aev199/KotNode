@@ -36,17 +36,25 @@ namespace KotNode.AutoCAD
                 hatch.SetHatchPattern(HatchPatternType.UserDefined,"_USER");
                 hatch.PatternAngle=index++%2==0?Math.PI/4:3*Math.PI/4;
                 hatch.PatternSpace=2*scale;hatch.HatchStyle=HatchStyle.Normal;hatch.Associative=false;
+                var boundaries=new System.Collections.Generic.List<ObjectId>();
                 for(int i=0;i<area.Loops.Count;i++)
                 {
-                    var loop=area.Loops[i];var vertices=new Point2dCollection();var bulges=new DoubleCollection();
-                    if(loop.Count==1&&loop[0].Circular)
+                    using(var boundary=SectionHatchBoundary.Create(area.Loops[i]))
                     {
-                        var c=loop[0];vertices.Add(new Point2d(c.X0+c.Radius,c.Y0));vertices.Add(new Point2d(c.X0-c.Radius,c.Y0));bulges.Add(1);bulges.Add(1);
+                        boundary.SetDatabaseDefaults(db);
+                        boundary.Layer=AssemblyViews.CutLayer;
+                        boundary.Visible=false;
+                        var boundaryId=block.AppendEntity(boundary);
+                        tr.AddNewlyCreatedDBObject(boundary,true);
+                        boundaries.Add(boundaryId);
+                        // Associative=false: AppendLoop extracts the closed geometry;
+                        // temporary drawing entities are removed after evaluation.
+                        hatch.AppendLoop(i==0?HatchLoopTypes.Outermost:HatchLoopTypes.Default,
+                            new ObjectIdCollection(new[]{boundaryId}));
                     }
-                    else foreach(var c in loop){vertices.Add(new Point2d(c.X0,c.Y0));bulges.Add(0);}
-                    hatch.AppendLoop((i==0?HatchLoopTypes.Outermost:HatchLoopTypes.Default)|HatchLoopTypes.Polyline,vertices,bulges);
                 }
                 hatch.EvaluateHatch(true);
+                foreach(var boundaryId in boundaries)tr.GetObject(boundaryId,OpenMode.ForWrite).Erase();
             }
             return id;
         }

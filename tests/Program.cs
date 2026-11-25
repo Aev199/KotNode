@@ -48,6 +48,7 @@ class Program
   } finally { Directory.Delete(dir,true); }
   Console.WriteLine(checks+" core checks passed");
   ParametricProjectionTests.Run();
+  SectionHatchBoundaryTests.Run();
   TableMergeTests.Run();
   AssemblyModelTests.Run();
   DraftingTests.Run(Path.Combine(AppContext.BaseDirectory,"fixtures","lisp07.json"));
