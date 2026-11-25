@@ -150,8 +150,8 @@ namespace KotNode.AutoCAD
                 if(entity==null||entity.OwnerId!=space.ObjectId||existing.Contains(id))
                     throw new InvalidOperationException("Объект уже входит во вспомогательный чертёж или находится вне модели.");
                 if(entity is BlockReference block && !block.ExtensionDictionary.IsNull &&
-                   ((DBDictionary)tr.GetObject(block.ExtensionDictionary,OpenMode.ForRead)).Contains(PartKey))
-                    throw new InvalidOperationException("Управляемую деталь нельзя включить во вспомогательную графику.");
+                   (((DBDictionary)tr.GetObject(block.ExtensionDictionary,OpenMode.ForRead)).Contains(PartKey)||((DBDictionary)tr.GetObject(block.ExtensionDictionary,OpenMode.ForRead)).Contains(AssemblyViews.Key)))
+                    throw new InvalidOperationException("Управляемую деталь или представление нельзя включить во вспомогательную графику.");
             }
             var dict=(DBDictionary)tr.GetObject(db.GroupDictionaryId,OpenMode.ForWrite);
             var group=new Group("Вспомогательная графика "+mark.Code,true);

@@ -14,7 +14,7 @@ namespace KotNode.AutoCAD
     // Its block reference is the placement; replacing the definition preserves placement.
     public static class AssemblyViews
     {
-        const string Key="KOTNODE_VIEW_1";
+        internal const string Key="KOTNODE_VIEW_1";
         public sealed class ViewData
         {
             public Guid Id { get; set; }=Guid.NewGuid();

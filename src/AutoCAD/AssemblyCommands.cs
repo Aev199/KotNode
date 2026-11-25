@@ -327,6 +327,86 @@ namespace KotNode.AutoCAD
             var at=new RigidPlacement {Origin=new Vector3(origin.X,origin.Y,origin.Z),AxisX=new Vector3(x.X,x.Y,x.Z),AxisY=new Vector3(y.X,y.Y,y.Z)};
             AddPrepared(doc,tr,m,part,at);
         });
+        // Source directions are independent of the insertion plane (always WCS XY).
+        static RigidPlacement ViewFrame(Document doc,AssemblyMark mark,bool section)
+        {
+            var ed=doc.Editor;
+            var options=new PromptKeywordOptions("\nПлоскость представления [Top/Front/Right/UCS] <Top>: ");
+            foreach(var keyword in new[]{"Top","Front","Right","UCS"})options.Keywords.Add(keyword);
+            options.Keywords.Default="Top";options.AllowNone=true;
+            var answer=ed.GetKeywords(options);
+            if(answer.Status!=PromptStatus.OK&&answer.Status!=PromptStatus.None)return null;
+            Vector3d x=Vector3d.XAxis,y=Vector3d.YAxis;
+            switch(answer.StringResult)
+            {
+                case "Front": y=Vector3d.ZAxis;break;
+                case "Right": x=Vector3d.YAxis;y=Vector3d.ZAxis;break;
+                case "UCS":
+                    x=Vector3d.XAxis.TransformBy(ed.CurrentUserCoordinateSystem);
+                    y=Vector3d.YAxis.TransformBy(ed.CurrentUserCoordinateSystem);break;
+            }
+            Vector3 origin;
+            if(section)
+            {
+                var p=ed.GetPoint("\nУкажите точку секущей плоскости на модели: ");
+                if(p.Status!=PromptStatus.OK)return null;
+                var w=p.Value.TransformBy(ed.CurrentUserCoordinateSystem);
+                origin=new Vector3(w.X,w.Y,w.Z);
+            }
+            else
+            {
+                if(mark.Instances.Count==0)throw new InvalidOperationException("В марке нет деталей.");
+                origin=ModelJson.Copy(mark.Instances[0].Placement.Origin);
+            }
+            var frame=new RigidPlacement {Origin=origin,AxisX=new Vector3(x.X,x.Y,x.Z),AxisY=new Vector3(y.X,y.Y,y.Z)};
+            frame.Validate();return frame;
+        }
+        static void AddView(Document doc,Transaction tr,bool section)
+        {
+            var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
+            if(refs.Count==0)throw new InvalidOperationException("В марке нет деталей.");
+            var frame=ViewFrame(doc,m,section);if(frame==null)return;
+            var name=Text(doc.Editor,section?"Название сечения (например, 1-1): ":"Название вида (например, Вид А): ");
+            if(name==null)return;
+            if(string.IsNullOrWhiteSpace(name))throw new InvalidOperationException("Укажите название представления.");
+            bool hidden=false;
+            if(!section)
+            {
+                var option=new PromptKeywordOptions("\nПоказывать невидимые линии отдельных тел? [Yes/No] <No>: ");
+                option.Keywords.Add("Yes");option.Keywords.Add("No");option.Keywords.Default="No";option.AllowNone=true;
+                var answer=doc.Editor.GetKeywords(option);
+                if(answer.Status!=PromptStatus.OK&&answer.Status!=PromptStatus.None)return;
+                hidden=answer.StringResult=="Yes";
+            }
+            var p=doc.Editor.GetPoint("\nТочка размещения плоского изображения (XY мировой системы): ");
+            if(p.Status!=PromptStatus.OK)return;
+            var location=p.Value.TransformBy(doc.Editor.CurrentUserCoordinateSystem);
+            Diagnostics.Step(section?"Построение точного сечения":"Проекция тел AutoCAD");
+            AssemblyViews.Create(doc.Database,tr,m,refs,new AssemblyViews.ViewData{Name=name,Frame=frame,IsSection=section,Hidden=hidden},location);
+            AssemblyDrawing.Save(doc.Database,tr,m);
+            doc.Editor.WriteMessage("\nПредставление создано. Геометрия 1:1; масштаб печати задаётся на листе.");
+        }
+        [CommandMethod("NAVIEW",CommandFlags.Modal)]
+        public void View()=>Run("NAVIEW",(doc,tr)=>AddView(doc,tr,false));
+        [CommandMethod("NASECTION",CommandFlags.Modal)]
+        public void SectionView()=>Run("NASECTION",(doc,tr)=>AddView(doc,tr,true));
+        [CommandMethod("NAUPDATEVIEWS",CommandFlags.Modal)]
+        public void UpdateViews()=>Run("NAUPDATEVIEWS",(doc,tr)=>{
+            var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
+            var count=AssemblyViews.Update(doc.Database,tr,m,refs);
+            if(count>0)AssemblyDrawing.Save(doc.Database,tr,m);
+            doc.Editor.WriteMessage("\nОбновлено представлений: "+count);
+        });
+        [CommandMethod("NAUPDATEVIEW",CommandFlags.Modal)]
+        public void UpdateView()=>Run("NAUPDATEVIEW",(doc,tr)=>{
+            var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
+            var picked=doc.Editor.GetEntity("\nВыберите блок вида или сечения: ");
+            if(picked.Status!=PromptStatus.OK)return;
+            var entry=AssemblyViews.Find(doc.Database,tr,m).SingleOrDefault(e=>e.Reference.ObjectId==picked.ObjectId);
+            if(entry==null)throw new InvalidOperationException("Выберите представление марки.");
+            AssemblyViews.Update(doc.Database,tr,m,refs,entry.Data.Id);
+            AssemblyDrawing.Save(doc.Database,tr,m);
+        });
         static void RefreshTree(Document doc)
         {
             if(tree==null)return;
@@ -354,6 +434,21 @@ namespace KotNode.AutoCAD
                             var child=node.Nodes.Add("Экземпляр "+(i+1));child.Tag=instances[i].Id.ToString("D");
                             if((string)child.Tag==previous)selected=child;
                         }
+                    }
+                    var views=AssemblyViews.Find(doc.Database,tr,m);
+                    if(views.Count>0)
+                    {
+                        var branch=root.Nodes.Add("Виды и сечения");
+                        var hash=AssemblyViews.Signature(m);
+                        foreach(var view in views)
+                        {
+                            var stale=view.Data.SourceHash!=hash;
+                            var node=branch.Nodes.Add((view.Data.IsSection?"Сечение: ":"Вид: ")+view.Data.Name+(stale?" [обновить]":""));
+                            node.Tag=view.Data.Id.ToString("D");
+                            node.ToolTipText=stale?"Исходная модель изменилась. Выполните NAUPDATEVIEW или NAUPDATEVIEWS.":"Представление соответствует сохранённой модели.";
+                            if((string)node.Tag==previous)selected=node;
+                        }
+                        branch.Expand();
                     }
                     var groups=AssemblyDrawing.AuxiliaryGroups(doc.Database,tr,m);
                     if(groups.Count>0)
@@ -404,7 +499,10 @@ namespace KotNode.AutoCAD
             var key=Text(doc.Editor,"Идентификатор детали или вспомогательного чертежа: ");if(key==null)return;
             ObjectId[] ids;
             if(Guid.TryParse(key,out var id))
+            {
                 ids=m.Instances.Where(i=>i.Id==id||i.PartId==id).Select(i=>refs[i.Id].ObjectId).ToArray();
+                if(ids.Length==0)ids=AssemblyViews.Find(doc.Database,tr,m).Where(e=>e.Data.Id==id).Select(e=>e.Reference.ObjectId).ToArray();
+            }
             else
             {
                 var aux=AssemblyDrawing.AuxiliaryGroups(doc.Database,tr,m).SingleOrDefault(g=>g.Item1==key);
@@ -416,9 +514,19 @@ namespace KotNode.AutoCAD
         [CommandMethod("NATREEDELETE",CommandFlags.Modal)]
         public void DeleteFromTree()=>Run("NATREEDELETE",(doc,tr)=>{
             var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
-            var key=Text(doc.Editor,"Идентификатор позиции или экземпляра: ");
+            var key=Text(doc.Editor,"Идентификатор позиции, экземпляра или вида: ");
             if(key==null)return;
             if(!Guid.TryParse(key,out var id))throw new InvalidOperationException("Выберите конструктивную деталь в дереве.");
+            var view=AssemblyViews.Find(doc.Database,tr,m).SingleOrDefault(e=>e.Data.Id==id);
+            if(view!=null)
+            {
+                var confirm=new PromptKeywordOptions("\nУдалить представление? [Yes/No] <No>: ");
+                confirm.Keywords.Add("Yes");confirm.Keywords.Add("No");confirm.Keywords.Default="No";
+                var choice=doc.Editor.GetKeywords(confirm);
+                if(choice.Status!=PromptStatus.OK||choice.StringResult!="Yes")return;
+                view.Reference.UpgradeOpen();view.Reference.Erase();
+                return;
+            }
             var instances=m.Instances.Where(i=>i.Id==id||i.PartId==id).ToList();
             if(instances.Count==0)
             {
@@ -459,7 +567,7 @@ namespace KotNode.AutoCAD
                 tree=new System.Windows.Forms.TreeView {Dock=DockStyle.Fill,HideSelection=false,ShowNodeToolTips=true};layout.Controls.Add(tree,0,1);
                 treeStatus=new Label {AutoSize=true,MaximumSize=new Size(300,0)};layout.Controls.Add(treeStatus,0,2);
                 var panel=new FlowLayoutPanel {Dock=DockStyle.Fill,AutoSize=true,FlowDirection=System.Windows.Forms.FlowDirection.LeftToRight,WrapContents=true,Padding=new Padding(1)};
-                foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Труба","NAPIPE"},new[]{"Лист","NAPLATE"},new[]{"Лист по контуру","NAPOLYPLATE"},new[]{"Кривой лист","NACURVED"},new[]{"Двутавр","NABEAM"},new[]{"Арматура","NAREBAR"},new[]{"Вспом. чертёж","NAAUX"},new[]{"Свойства","NAEDIT"},new[]{"Копировать","NACOPY"},new[]{"Линейный массив","NAARRAY"},new[]{"Отделить","NADETACH"},new[]{"Удалить","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"},new[]{"Восстановить","NAREPAIR"},new[]{"Обновить дерево","NAREFRESH"}})
+                foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Труба","NAPIPE"},new[]{"Лист","NAPLATE"},new[]{"Лист по контуру","NAPOLYPLATE"},new[]{"Кривой лист","NACURVED"},new[]{"Двутавр","NABEAM"},new[]{"Арматура","NAREBAR"},new[]{"Вспом. чертёж","NAAUX"},new[]{"Создать вид","NAVIEW"},new[]{"Создать сечение","NASECTION"},new[]{"Обновить вид","NAUPDATEVIEW"},new[]{"Обновить виды","NAUPDATEVIEWS"},new[]{"Свойства","NAEDIT"},new[]{"Копировать","NACOPY"},new[]{"Линейный массив","NAARRAY"},new[]{"Отделить","NADETACH"},new[]{"Удалить","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"},new[]{"Восстановить","NAREPAIR"},new[]{"Обновить дерево","NAREFRESH"}})
                 {
                     var cmd=pair[1];var button=new Button {Text=pair[0],AutoSize=true};
                     button.Click+=(s,e)=>Queue(cmd);panel.Controls.Add(button);
