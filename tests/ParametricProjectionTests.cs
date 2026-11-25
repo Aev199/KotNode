@@ -25,6 +25,11 @@ static class ParametricProjectionTests
         Near(frame3.AxisX.Z,Math.Sqrt(.5),"three point plane inclination");
         Near(frame3.AxisY.Y,1,"three point plane orthogonalization");
         Near(frame3.ToWorld(new Vector3(0,0,1)).X-a3.X,-Math.Sqrt(.5),"observer normal");
+        var localFrame=frame3.RelativeTo(new RigidPlacement{Origin=new Vector3(1000,2000,3000)});
+        var movedFrame=localFrame.InParent(new RigidPlacement{Origin=new Vector3(10,20,30),AxisX=new Vector3(0,1,0),AxisY=new Vector3(-1,0,0)});
+        Near(movedFrame.Origin.X,10,"attached plane follows translation");
+        Near(movedFrame.AxisX.Y,Math.Sqrt(.5),"attached plane follows rotation");
+        Near(movedFrame.AxisY.X,-1,"attached plane maintains local orientation");
         var rev3=RigidPlacement.FromThreePoints(a3,b3,c3,true);
         Near(rev3.ToWorld(new Vector3(0,0,1)).X-a3.X,Math.Sqrt(.5),"reverse observer normal");
         Rejected(()=>RigidPlacement.FromThreePoints(a3,a3,c3),"coincident plane points rejected");

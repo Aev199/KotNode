@@ -504,6 +504,26 @@ namespace KotNode.Core
             var frame=new RigidPlacement{Origin=new Vector3(origin.X,origin.Y,origin.Z),AxisX=x,AxisY=y};
             frame.Validate();return frame;
         }
+        public RigidPlacement RelativeTo(RigidPlacement parent)
+        {
+            Validate();parent.Validate();
+            var z=parent.AxisX.Cross(parent.AxisY);
+            Func<Vector3,Vector3> local=v=>new Vector3(v.Dot(parent.AxisX),v.Dot(parent.AxisY),v.Dot(z));
+            var d=new Vector3(Origin.X-parent.Origin.X,Origin.Y-parent.Origin.Y,Origin.Z-parent.Origin.Z);
+            var result=new RigidPlacement{Origin=local(d),AxisX=local(AxisX),AxisY=local(AxisY)};
+            result.Validate();return result;
+        }
+        public RigidPlacement InParent(RigidPlacement parent)
+        {
+            Validate();parent.Validate();
+            var z=parent.AxisX.Cross(parent.AxisY);
+            Func<Vector3,Vector3> world=v=>new Vector3(
+                parent.AxisX.X*v.X+parent.AxisY.X*v.Y+z.X*v.Z,
+                parent.AxisX.Y*v.X+parent.AxisY.Y*v.Y+z.Y*v.Z,
+                parent.AxisX.Z*v.X+parent.AxisY.Z*v.Y+z.Z*v.Z);
+            var result=new RigidPlacement{Origin=parent.ToWorld(Origin),AxisX=world(AxisX),AxisY=world(AxisY)};
+            result.Validate();return result;
+        }
         public Vector3 ToWorld(Vector3 local)
         {
             Validate();

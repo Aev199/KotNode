@@ -16,7 +16,7 @@ namespace KotNode.AutoCAD
     public static class AssemblyViews
     {
         internal const string Key="KOTNODE_VIEW_1";
-        internal const int Revision=10;
+        internal const int Revision=11;
         internal const string VisibleLayer="NA_VISIBLE",HiddenLayer="NA_HIDDEN",CutLayer="NA_CUT",HatchLayer="NA_HATCH";
         static double PaperScale(ViewData d)=>d.AnnotationScale>0?d.AnnotationScale:20;
         static void Layers(Database db,Transaction tr)
@@ -57,6 +57,8 @@ namespace KotNode.AutoCAD
             public bool ManualSnapshot { get; set; }
             public int GeneratorRevision { get; set; }
             public RigidPlacement Frame { get; set; }
+            public Guid? FrameAnchorId { get; set; }
+            public RigidPlacement RelativeFrame { get; set; }
             public string SourceHash { get; set; }
             public string Handle { get; set; }
         }
@@ -310,8 +312,17 @@ namespace KotNode.AutoCAD
             }
             finally{foreach(var body in bodies)body.Dispose();}
         }
+        internal static RigidPlacement ResolveFrame(AssemblyMark mark,ViewData data)
+        {
+            if(!data.FrameAnchorId.HasValue)return data.Frame;
+            var anchor=mark.Instances.SingleOrDefault(i=>i.Id==data.FrameAnchorId.Value);
+            if(anchor==null)throw new InvalidOperationException("Деталь привязки плоскости удалена. Задайте новую плоскость в NAEDITVIEW или снимите привязку.");
+            if(data.RelativeFrame==null)throw new InvalidOperationException("Повреждена локальная плоскость представления.");
+            return data.RelativeFrame.InParent(anchor.Placement);
+        }
         static ObjectId Build(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs,ViewData data)
         {
+            data.Frame=ResolveFrame(mark,data);
             Layers(db,tr);
             if(data.ParametricPrototype)return ParametricViewDrawing.Build(db,tr,mark,data);
             if(refs.Count==0)throw new InvalidOperationException("В марке нет деталей для представления.");

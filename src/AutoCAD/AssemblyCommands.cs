@@ -518,7 +518,10 @@ namespace KotNode.AutoCAD
                 if(data.IsSection)form.Check("Штриховать сечение","hatch",!data.NoHatch);
                 if(!data.IsSection||data.FullCut)form.Check("Невидимые линии","hidden",data.Hidden);
                 form.Check("Задать плоскость заново","plane",false);
+                form.Check("Привязать плоскость к выбранной детали (заново)","anchor",false);
+                form.Check("Снять привязку к детали","detach",false);
                 form.ValidateFields=()=>{
+                    if(form.Checked("anchor")&&form.Checked("detach"))throw new InvalidOperationException("Выберите только одну операцию с привязкой.");
                     var name=form.Get("name").Trim();var scale=form.Value("scale");
                     if(string.IsNullOrWhiteSpace(name)||double.IsNaN(scale)||double.IsInfinity(scale)||scale<=0||scale>1000)
                         throw new InvalidOperationException("Введите название и масштаб от 0 до 1000.");
@@ -527,9 +530,25 @@ namespace KotNode.AutoCAD
                 data.Name=form.Get("name").Trim();data.AnnotationScale=form.Value("scale");
                 if(data.IsSection)data.NoHatch=!form.Checked("hatch");
                 if(!data.IsSection||data.FullCut)data.Hidden=form.Checked("hidden");
-                if(form.Checked("plane"))
+                if(form.Checked("plane")||form.Checked("anchor")||form.Checked("detach"))
                 {
-                    var frame=ViewFrame(doc,m,data.IsSection);if(frame==null)return;
+                    var oldAnchor=m.Instances.SingleOrDefault(i=>data.FrameAnchorId.HasValue&&i.Id==data.FrameAnchorId.Value);
+                    var frame=oldAnchor!=null?AssemblyViews.ResolveFrame(m,data):data.Frame;
+                    if(form.Checked("plane"))
+                    {
+                        frame=ViewFrame(doc,m,data.IsSection);if(frame==null)return;
+                    }
+                    if(form.Checked("detach")) {data.FrameAnchorId=null;data.RelativeFrame=null;}
+                    else if(form.Checked("anchor"))
+                    {
+                        var id=Select(doc,refs);if(!id.HasValue)return;
+                        data.FrameAnchorId=id;oldAnchor=m.Instances.Single(i=>i.Id==id.Value);
+                    }
+                    if(data.FrameAnchorId.HasValue)
+                    {
+                        if(oldAnchor==null)throw new InvalidOperationException("Выберите новую деталь привязки или снимите привязку.");
+                        data.RelativeFrame=frame.RelativeTo(oldAnchor.Placement);
+                    }
                     data.Frame=frame;
                 }
             }
