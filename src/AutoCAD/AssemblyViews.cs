@@ -16,7 +16,7 @@ namespace KotNode.AutoCAD
     public static class AssemblyViews
     {
         internal const string Key="KOTNODE_VIEW_1";
-        internal const int Revision=6;
+        internal const int Revision=7;
         internal const string VisibleLayer="NA_VISIBLE",HiddenLayer="NA_HIDDEN",CutLayer="NA_CUT",HatchLayer="NA_HATCH";
         static double PaperScale(ViewData d)=>d.AnnotationScale>0?d.AnnotationScale:20;
         static void Layers(Database db,Transaction tr)
@@ -93,7 +93,7 @@ namespace KotNode.AutoCAD
             data.Handle=b.Handle.ToString();
             AssemblyDrawing.Write((DBDictionary)tr.GetObject(b.ExtensionDictionary,OpenMode.ForRead),Key,data,tr);
         }
-        static Matrix3d ToLocal(RigidPlacement p)
+        internal static Matrix3d ToLocal(RigidPlacement p)
         {
             p.Validate();
             var o=new Point3d(p.Origin.X,p.Origin.Y,p.Origin.Z);
@@ -101,7 +101,7 @@ namespace KotNode.AutoCAD
             var y=new Vector3d(p.AxisY.X,p.AxisY.Y,p.AxisY.Z);
             return Matrix3d.AlignCoordinateSystem(o,x,y,x.CrossProduct(y),Point3d.Origin,Vector3d.XAxis,Vector3d.YAxis,Vector3d.ZAxis);
         }
-        static List<Solid3d> Bodies(Transaction tr,Dictionary<Guid,BlockReference> refs,Matrix3d toLocal)
+        internal static List<Solid3d> Bodies(Transaction tr,Dictionary<Guid,BlockReference> refs,Matrix3d toLocal)
         {
             var result=new List<Solid3d>();
             try
@@ -228,7 +228,7 @@ namespace KotNode.AutoCAD
         }
         // All solid copies are already expressed in the chosen view frame.
         // The observer is on +Z; the retained half is Z <= 0.
-        static List<Solid3d> ClipBehind(List<Solid3d> bodies)
+        internal static List<Solid3d> ClipBehind(List<Solid3d> bodies)
         {
             var result=new List<Solid3d>();
             try
@@ -378,8 +378,63 @@ namespace KotNode.AutoCAD
             data.MarkId=mark.Id;data.ManualSnapshot=true;data.SourceHash=Signature(mark);data.GeneratorRevision=Revision;
             Save(reference,tr,data);
         }
+        internal static void ExportForFlatshot(Transaction tr,Dictionary<Guid,BlockReference> refs,FlatshotWorkflow.Job job,string path)
+        {
+            var bodies=Bodies(tr,refs,ToLocal(job.Frame));
+            try
+            {
+                var clipped=job.IsSection?ClipBehind(bodies):null;
+                try
+                {
+                    var input=clipped??bodies;
+                    if(input.Count==0)throw new InvalidOperationException("Нет тел для проецирования. Проверьте положение разреза.");
+                    using(var scratch=new Database(true,true))
+                    {
+                        scratch.Insunits=UnitsValue.Millimeters;
+                        using(var tx=scratch.TransactionManager.StartTransaction())
+                        {
+                            var root=(DBDictionary)tx.GetObject(scratch.NamedObjectsDictionaryId,OpenMode.ForWrite);
+                            AssemblyDrawing.Write(root,FlatshotWorkflow.JobKey,job,tx);
+                            var space=AssemblyDrawing.ModelSpace(scratch,tx,OpenMode.ForWrite);
+                            foreach(var solid in input)
+                            {
+                                var copy=(Solid3d)solid.Clone();
+                                try
+                                {
+                                    copy.SetDatabaseDefaults(scratch);
+                                    copy.Layer="0";
+                                    space.AppendEntity(copy);tx.AddNewlyCreatedDBObject(copy,true);
+                                }
+                                catch{if(copy.ObjectId.IsNull)copy.Dispose();throw;}
+                            }
+                            tx.Commit();
+                        }
+                        scratch.SaveAs(path,DwgVersion.Current);
+                    }
+                }
+                finally{if(clipped!=null)foreach(var solid in clipped)solid.Dispose();}
+            }
+            finally{foreach(var solid in bodies)solid.Dispose();}
+        }
+        internal static void AddSectionOverlay(Database db,Transaction tr,Dictionary<Guid,BlockReference> refs,RigidPlacement frame,BlockTableRecord target,ViewData data)
+        {
+            Layers(db,tr);
+            var bodies=Bodies(tr,refs,ToLocal(frame));
+            try{SectionCurves(target,tr,db,bodies,data);}
+            finally{foreach(var solid in bodies)solid.Dispose();}
+        }
+        internal static void CreateImported(Database db,Transaction tr,AssemblyMark mark,ObjectId block,ViewData data,Point3d at)
+        {
+            data.MarkId=mark.Id;data.SourceHash=Signature(mark);data.GeneratorRevision=Revision;data.ManualSnapshot=true;
+            var reference=new BlockReference(at,block);
+            reference.SetDatabaseDefaults(db);
+            var space=AssemblyDrawing.ModelSpace(db,tr,OpenMode.ForWrite);
+            space.AppendEntity(reference);tr.AddNewlyCreatedDBObject(reference,true);
+            Save(reference,tr,data);
+        }
         internal static void Rebuild(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs,Entry entry)
         {
+            if(entry.Data.ManualSnapshot)throw new InvalidOperationException("Снимки FLATSHOT нельзя обновлять автоматически. Выполните NAVIEW/NASECTION, затем NAFLATFINISH.");
             var geometry=Build(db,tr,refs,entry.Data);
             AssemblyDrawing.Replace(entry.Reference,geometry);
             entry.Data.SourceHash=Signature(mark);entry.Data.GeneratorRevision=Revision;entry.Data.ManualSnapshot=false;
@@ -389,8 +444,13 @@ namespace KotNode.AutoCAD
         {
             var entries=Find(db,tr,mark).Where(e=>!only.HasValue||e.Data.Id==only.Value).ToList();
             if(only.HasValue&&entries.Count==0)throw new InvalidOperationException("Представление не найдено.");
-            foreach(var entry in entries)Rebuild(db,tr,mark,refs,entry);
-            return entries.Count;
+            int count=0;
+            foreach(var entry in entries)
+            {
+                if(entry.Data.ManualSnapshot)continue;
+                Rebuild(db,tr,mark,refs,entry);count++;
+            }
+            return count;
         }
     }
 }

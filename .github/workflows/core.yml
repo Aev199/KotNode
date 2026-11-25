@@ -1,4 +1,4 @@
-name: Core regression tests
+name: KotNode AutoCAD 2021 regression and plugin
 on:
   push:
   pull_request:
@@ -6,62 +6,31 @@ on:
 permissions:
   contents: read
 jobs:
-  core:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
-      - run: dotnet run --project tests/KotNode.Tests.csproj -c Release
-      - run: dotnet build src/Core/KotNode.Core.csproj -c Release -f net48
   plugin:
     runs-on: windows-2022
-    timeout-minutes: 35
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - name: Build AutoCAD 2021 plugin and run core checks
+      - name: Build managed AutoCAD 2021 plugin and run core tests
         shell: pwsh
         run: ./build.ps1
-      - name: Restore previously compiled HLR bridge
-        id: hlr-cache
-        uses: actions/cache@v4
-        with:
-          path: src/NativeHlr/bin/KotNode.HlrBridge.dll
-          key: hlr-win2022-x64-v142-arx2021-v1-${{ hashFiles('src/NativeHlr/Projector.cpp', 'src/NativeHlr/KotNode.HlrBridge.vcxproj', 'build-hlr.ps1', 'ci/get-arx2021.ps1', 'ci/ensure-v142.ps1') }}
-      - name: Acquire Autodesk ObjectARX 2021 SDK
-        if: steps.hlr-cache.outputs.cache-hit != 'true'
-        shell: pwsh
-        run: ./ci/get-arx2021.ps1
-      - name: Ensure MSVC v142 and C++/CLI
-        if: steps.hlr-cache.outputs.cache-hit != 'true'
-        shell: pwsh
-        run: ./ci/ensure-v142.ps1
-      - name: Build native HLR bridge
-        if: steps.hlr-cache.outputs.cache-hit != 'true'
-        shell: pwsh
-        run: ./build-hlr.ps1 -ArxSdk $env:ARX2021
-      - name: Package native bridge
+      - name: Verify plugin package
         shell: pwsh
         run: |
-          Copy-Item src/NativeHlr/bin/KotNode.HlrBridge.dll plugin -Force -ErrorAction Stop
-      - name: Verify complete plugin package
-        shell: pwsh
-        run: |
-          $required = 'KotNode.AutoCAD.dll','KotNode.Core.dll','KotNode.HlrBridge.dll'
+          $required = 'KotNode.AutoCAD.dll','KotNode.Core.dll'
           foreach ($name in $required) {
             $file = Get-Item (Join-Path plugin $name) -ErrorAction Stop
             if ($file.Length -lt 1024) { throw "Invalid binary: $name" }
-            $assembly = [Reflection.AssemblyName]::GetAssemblyName($file.FullName)
-            Write-Host "$name : $($assembly.FullName), $($file.Length) bytes"
+            Write-Host "$name : $($file.Length) bytes"
           }
+          if (Test-Path plugin/KotNode.HlrBridge.dll) { throw 'Disabled experimental HLR bridge must not enter Flatshot package.' }
           Get-ChildItem plugin -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $([IO.Path]::GetFileName($_.Path))" } | Set-Content plugin/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: KotNode-AutoCAD2021-HLR
+          name: KotNode-AutoCAD2021-FLATSHOT-experimental
           path: plugin/
           if-no-files-found: error
           retention-days: 7
