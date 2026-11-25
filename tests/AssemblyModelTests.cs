@@ -92,6 +92,7 @@ static class AssemblyModelTests
         edited.RemoveInstance(b.Id); edited.RemoveUnusedDefinition(detached.Id);
         Check(edited.Parts.Count==1 && edited.Instances.Count==1 && edited.Specification().Single().Count==1,"delete instance and unused definition");
         ShapeTests();
+        ProjectTests();
         Console.WriteLine(checks + " assembly checks passed");
     }
 
@@ -146,5 +147,57 @@ static class AssemblyModelTests
         mark.AddPart(part,new RigidPlacement()); mark.AddPart(beam,new RigidPlacement()); mark.AddPart(bar,new RigidPlacement());
         Check(Json.Copy(mark).Specification().Count==3 && Near(Json.Copy(mark).Specification().Sum(r=>r.TotalMassKg),mark.Specification().Sum(r=>r.TotalMassKg)),"all new shapes survive assembly roundtrip");
         var ambiguous=Json.Copy(part); ambiguous.IBeam=beam.IBeam; Reject(ambiguous.Validate,"ambiguous new shape rejected");
+    }
+
+    static void ProjectTests()
+    {
+        var legacy=new Project { Code="T",Name="Котлован",Version=5 };
+        var old=new NodeMark { Code="УР-1" }; legacy.Marks.Add(old);
+        legacy.Uses.Add(new Use { MarkId=old.Id,Count=3,Included=true,Location="Ярус 1" });
+        string original=Json.Write(legacy);
+        var p=AssemblyProject.FromLegacy(legacy);
+        Check(p.Id==legacy.Id && p.Version==0 && p.LegacySourceVersion==5 && p.Marks[0].Id==old.Id && p.Marks[0].DetailId==old.DetailId && p.Uses[0].Id==legacy.Uses[0].Id,"migration preserves source identity");
+        Check(Near(p.Materials().Single().TotalMassKg,legacy.Steel().Single().TotalMass),"legacy mass preserved after migration");
+        var mark=new AssemblyMark { Code="УР-2" };
+        var plate=new PartDefinition { Name="Лист",Position="1",IncludeInSpec=true,Kind=PartKind.RectangularPlate,
+            Plate=new RectangularPlateShape { Length=500,Width=200,Thickness=12 }};
+        var instance=mark.AddPart(plate,new RigidPlacement()); mark.CopyInstance(instance.Id);
+        mark.AddPart(new PartDefinition { Name="Труба",Kind=PartKind.Pipe,Pipe=new PipeShape { OuterDiameter=820,Thickness=8,Length=1000 }},new RigidPlacement());
+        p.Assemblies.Add(mark);
+        Check(p.Materials().Count==1,"unused assembly adds no project steel");
+        p.Uses.Add(new Use { MarkId=mark.Id,Count=4,Included=true,Location="Ярус 2" });
+        p.Uses.Add(new Use { MarkId=mark.Id,Count=5,Included=false,Location="Черновик" });
+        var row=p.Materials("Ярус 2").Single();
+        Check(row.DetailCount==8 && row.PartsPerNode==2 && row.NodeCount==4 && Near(row.TotalMassKg,75.36),"assembly project scope and reference exclusion");
+        Check(p.Materials("Черновик").Count==0 && p.Materials().Count==2,"mixed project and draft exclusions");
+        Check(Json.Write(legacy)==original,"migration does not mutate legacy");
+        var copy=Json.Copy(p);
+        Check(Near(copy.Materials().Sum(r=>r.TotalMassKg),p.Materials().Sum(r=>r.TotalMassKg)),"mixed project JSON roundtrip");
+        copy.Assemblies[0].Code=" ур-1 "; Reject(copy.Validate,"duplicate cross-format mark code");
+        copy=Json.Copy(p); copy.Assemblies[0].Id=old.Id; Reject(copy.Validate,"duplicate cross-format mark id");
+        copy=Json.Copy(p); copy.Uses[0].MarkId=Guid.NewGuid(); Reject(copy.Validate,"orphan use in mixed project");
+        Reject(()=>Json.Read<Project>(Json.Write(p)).Validate(),"old reader rejects schema 2");
+        string dir=Path.Combine(Path.GetTempPath(),"kotnode-assembly-"+Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string oldPath=Path.Combine(dir,"legacy.json"), path=Path.Combine(dir,"mixed.json");
+            File.WriteAllText(oldPath,original);
+            Reject(()=>new AssemblyProjectStore(oldPath).Save(p),"migration cannot overwrite source");
+            Check(File.ReadAllText(oldPath)==original,"source bytes preserved");
+            var a=new AssemblyProjectStore(path);
+            var saved=a.Save(p);
+            Check(saved.Version==1 && p.Version==0,"new project save does not mutate caller");
+            var b=new AssemblyProjectStore(path); var stale=b.Load();
+            saved.Name="New"; var latest=a.Save(saved);
+            bool conflict=false; try { b.Save(stale); } catch(IOException) { conflict=true; }
+            Check(conflict,"concurrent schema-2 edit rejected");
+            conflict=false; try { a.Save(saved); } catch(IOException) { conflict=true; }
+            Check(conflict,"stale candidate rejected even in same store");
+            Check(latest.Version==2 && new AssemblyProjectStore(path).Load().Name=="New","winner preserved");
+            Check(Json.Read<AssemblyProject>(File.ReadAllText(path+".bak")).Version==1,"schema-2 backup preserved");
+            Reject(()=>new ProjectStore(path).Load(),"legacy store rejects schema 2");
+        }
+        finally { Directory.Delete(dir,true); }
     }
 }
