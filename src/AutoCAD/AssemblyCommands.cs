@@ -9,6 +9,7 @@ using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.Windows;
 using KotNode.Core;
+using ModelJson=KotNode.Core.Json;
 using AcApp=Autodesk.AutoCAD.ApplicationServices.Application;
 [assembly: CommandClass(typeof(KotNode.AutoCAD.AssemblyCommands))]
 
@@ -123,7 +124,7 @@ namespace KotNode.AutoCAD
         {
             if(palette==null)
             {
-                var panel=new FlowLayoutPanel {Dock=DockStyle.Fill,AutoScroll=true,FlowDirection=FlowDirection.TopDown,WrapContents=false,Padding=new Padding(8)};
+                var panel=new FlowLayoutPanel {Dock=DockStyle.Fill,AutoScroll=true,FlowDirection=System.Windows.Forms.FlowDirection.TopDown,WrapContents=false,Padding=new Padding(8)};
                 panel.Controls.Add(new Label {Text="Экспериментальный конструктор\nОдна марка на DWG • модель 1:1",AutoSize=true});
                 foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Добавить трубу","NAPIPE"},new[]{"Добавить лист","NAPLATE"},new[]{"Свойства детали","NAEDIT"},new[]{"Копировать экземпляр","NACOPY"},new[]{"Отделить позицию","NADETACH"},new[]{"Удалить экземпляр","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"},new[]{"Восстановить удалённое","NAREPAIR"}})
                 {
@@ -160,7 +161,7 @@ namespace KotNode.AutoCAD
             var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
             var id=Select(doc,refs);if(!id.HasValue)return;
             var instance=m.Instances.Single(i=>i.Id==id.Value);
-            var part=Json.Copy(m.Parts.Single(p=>p.Id==instance.PartId));
+            var part=ModelJson.Copy(m.Parts.Single(p=>p.Id==instance.PartId));
             if(!EditForm(part))return;
             m.ReplaceDefinition(part.Id,part);
             var geometry=AssemblyDrawing.Geometry(doc.Database,tr,part);

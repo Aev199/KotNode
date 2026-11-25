@@ -5,6 +5,7 @@ using System.Text;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 using KotNode.Core;
+using ModelJson=KotNode.Core.Json;
 
 namespace KotNode.AutoCAD
 {
@@ -29,7 +30,7 @@ namespace KotNode.AutoCAD
             using(var data=xr.Data)
             {
                 if(data==null)throw new InvalidOperationException("Повреждены данные конструктора.");
-                return Json.Read<T>(Encoding.UTF8.GetString(data.AsArray().Where(v=>v.TypeCode==310).SelectMany(v=>(byte[])v.Value).ToArray()));
+                return ModelJson.Read<T>(Encoding.UTF8.GetString(data.AsArray().Where(v=>v.TypeCode==310).SelectMany(v=>(byte[])v.Value).ToArray()));
             }
         }
         static void Write<T>(DBDictionary dict,string key,T value,Transaction tr)
@@ -38,7 +39,7 @@ namespace KotNode.AutoCAD
             Xrecord xr;
             if(dict.Contains(key))xr=(Xrecord)tr.GetObject(dict.GetAt(key),OpenMode.ForWrite);
             else {xr=new Xrecord();dict.SetAt(key,xr);tr.AddNewlyCreatedDBObject(xr,true);}
-            var bytes=Encoding.UTF8.GetBytes(Json.Write(value));
+            var bytes=Encoding.UTF8.GetBytes(ModelJson.Write(value));
             var values=new List<TypedValue>();
             for(int i=0;i<bytes.Length;i+=127)values.Add(new TypedValue(310,bytes.Skip(i).Take(127).ToArray()));
             using(var rb=new ResultBuffer(values.ToArray()))xr.Data=rb;
