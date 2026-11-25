@@ -16,7 +16,7 @@ namespace KotNode.AutoCAD
     public static class AssemblyViews
     {
         internal const string Key="KOTNODE_VIEW_1";
-        internal const int Revision=5;
+        internal const int Revision=6;
         internal const string VisibleLayer="NA_VISIBLE",HiddenLayer="NA_HIDDEN",CutLayer="NA_CUT",HatchLayer="NA_HATCH";
         static double PaperScale(ViewData d)=>d.AnnotationScale>0?d.AnnotationScale:20;
         static void Layers(Database db,Transaction tr)
@@ -254,7 +254,7 @@ namespace KotNode.AutoCAD
         {
             if(bodies.Count==0)return;
             Diagnostics.Step("HLR: единая проекция "+bodies.Count+" тел");
-            var curves=NativeHlr.Project(bodies,data.Hidden);
+            var curves=NativeHlr.Project(db,tr,bodies,data.Hidden);
             try
             {
                 int count=0;

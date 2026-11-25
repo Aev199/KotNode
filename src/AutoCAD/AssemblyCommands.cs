@@ -427,7 +427,7 @@ namespace KotNode.AutoCAD
         [CommandMethod("NAHLRSTATUS",CommandFlags.Modal)]
         public void HlrStatus()=>Run("NAHLRSTATUS",(doc,tr)=>{
             NativeHlr.Require();
-            doc.Editor.WriteMessage("\nКомпонент HLR загружен. Для проверки вычисления создайте NAVIEW.");
+            doc.Editor.WriteMessage("\n"+NativeHlr.SelfTest(doc.Database,tr));
         });
         [CommandMethod("NAEXPORTCUT",CommandFlags.Modal)]
         public void ExportCut()=>Run("NAEXPORTCUT",(doc,tr)=>{
