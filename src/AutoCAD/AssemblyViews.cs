@@ -16,7 +16,7 @@ namespace KotNode.AutoCAD
     public static class AssemblyViews
     {
         internal const string Key="KOTNODE_VIEW_1";
-        internal const int Revision=4;
+        internal const int Revision=5;
         internal const string VisibleLayer="NA_VISIBLE",HiddenLayer="NA_HIDDEN",CutLayer="NA_CUT",HatchLayer="NA_HATCH";
         static double PaperScale(ViewData d)=>d.AnnotationScale>0?d.AnnotationScale:20;
         static void Layers(Database db,Transaction tr)
@@ -48,6 +48,7 @@ namespace KotNode.AutoCAD
             public Guid MarkId { get; set; }
             public string Name { get; set; }
             public bool IsSection { get; set; }
+            public bool FullCut { get; set; }
             public bool Hidden { get; set; }
             // Zero is legacy default; use 20 as annotation/printing scale.
             public double AnnotationScale { get; set; }
@@ -225,105 +226,88 @@ namespace KotNode.AutoCAD
                     }
                 }
         }
-        static IEnumerable<Entity> Entities(Array a)
+        // All solid copies are already expressed in the chosen view frame.
+        // The observer is on +Z; the retained half is Z <= 0.
+        static List<Solid3d> ClipBehind(List<Solid3d> bodies)
         {
-            if(a==null)yield break;
-            foreach(var item in a)if(item is Entity entity)yield return entity;
-        }
-        // Use native projections first; the separate visibility pass compares
-        // depths of overlapping solids and splits curves at projected intersections.
-        static void ProjectCurves(BlockTableRecord block,Transaction tr,Database db,List<Solid3d> bodies,ViewData data)
-        {
-            // Section/elevation generation can return empty arrays for transient solids.
-            // Register transformed copies temporarily; never transform the original model.
-            var space=AssemblyDrawing.ModelSpace(db,tr,OpenMode.ForWrite);
-            var temporary=new List<Solid3d>();
-            var edges=new List<ProjectionVisibility.Edge>();
-            Section section=null;
-            var vertical=Matrix3d.Rotation(Math.PI/2,Vector3d.XAxis,Point3d.Origin);
-            var horizontal=vertical.Inverse();
+            var result=new List<Solid3d>();
             try
             {
-                foreach(var body in bodies)
-                {
-                    var copy=(Solid3d)body.Clone();
-                    try
+                using(var plane=new Plane(Point3d.Origin,-Vector3d.ZAxis))
+                    foreach(var body in bodies)
                     {
-                        copy.SetDatabaseDefaults(db);copy.Layer="0";
-                        copy.TransformBy(vertical);
-                        space.AppendEntity(copy);tr.AddNewlyCreatedDBObject(copy,true);
-                        temporary.Add(copy);
-                    }
-                    catch {if(copy.ObjectId.IsNull)copy.Dispose();throw;}
-                }
-                double minX=bodies.Min(b=>b.GeometricExtents.MinPoint.X);
-                double maxX=bodies.Max(b=>b.GeometricExtents.MaxPoint.X);
-                double minY=bodies.Min(b=>b.GeometricExtents.MinPoint.Y);
-                double maxY=bodies.Max(b=>b.GeometricExtents.MaxPoint.Y);
-                double maxZ=bodies.Max(b=>b.GeometricExtents.MaxPoint.Z);
-                double margin=Math.Max(1,Math.Max(maxX-minX,maxY-minY)*0.01);
-                double z=maxZ+margin;
-                double middleY=(minY+maxY)/2;
-                // Work in the conventional XZ elevation plane. A horizontal
-                // section plane in world XY returned no entities in AutoCAD 2021.
-                // View-local (x,y,z) -> kernel (x,-z,y).
-                var points=new Point3dCollection(new[]{new Point3d(minX-margin,-z,middleY),new Point3d(maxX+margin,-z,middleY)});
-                section=new Section(points,Vector3d.ZAxis);
-                section.SetDatabaseDefaults(db);section.State=SectionState.Plane;
-                space.AppendEntity(section);tr.AddNewlyCreatedDBObject(section,true);
-                section.ViewingDirection=-Vector3d.YAxis;
-                section.SetHeight(SectionHeight.HeightAboveSectionLine,(maxY-minY)/2+margin);
-                section.SetHeight(SectionHeight.HeightBelowSectionLine,(maxY-minY)/2+margin);
-                var settings=(SectionSettings)tr.GetObject(section.Settings,OpenMode.ForWrite);
-                var type=SectionType.Section2d;
-                settings.CurrentSectionType=type;
-                settings.SetGenerationOptions(type,SectionGeneration.SourceSelectedObjects|SectionGeneration.DestinationNewBlock);
-                settings.SetSourceObjects(type,new ObjectIdCollection(temporary.Select(b=>b.ObjectId).ToArray()));
-                settings.SetVisibility(type,SectionGeometry.BackgroundGeometry,true);
-                settings.SetVisibility(type,SectionGeometry.ForegroundGeometry,true);
-                settings.SetVisibility(type,SectionGeometry.CurveTangencyLines,false);
-                var shift=Matrix3d.Displacement(new Vector3d(0,0,-z))*horizontal;
-                Diagnostics.Step("Вертикальная проекция: тел "+temporary.Count+", Y плоскости="+(-z).ToString("G17")+", направление="+section.ViewingDirection+", высота="+(maxY-minY+2*margin).ToString("G17"));
-                for(int i=0;i<temporary.Count;i++)
-                {
-                    for(int pass=0;pass<(data.Hidden?2:1);pass++)
-                    {
-                        bool hidden=pass==1;
-                        settings.SetHiddenLine(type,SectionGeometry.BackgroundGeometry,hidden);
-                        settings.SetHiddenLine(type,SectionGeometry.ForegroundGeometry,hidden);
-                        section.GenerateSectionGeometry(temporary[i],out Array cut,out Array fill,out Array back,out Array front,out Array tangent);
-                        var all=Entities(cut).Concat(Entities(fill)).Concat(Entities(back)).Concat(Entities(front)).Concat(Entities(tangent)).ToList();
+                        var ext=body.GeometricExtents;
+                        if(ext.MinPoint.Z>=-1e-7)continue;
+                        var clone=(Solid3d)body.Clone();
                         try
                         {
-                            var projected=Entities(back).Concat(Entities(front)).ToList();
-                            Diagnostics.Step("Тело "+(i+1)+"/"+temporary.Count+", скрытые="+hidden+
-                                ": boundary="+(cut?.Length??0)+", fill="+(fill?.Length??0)+", background="+(back?.Length??0)+", foreground="+(front?.Length??0)+", tangent="+(tangent?.Length??0));
-                            if(pass==0&&projected.Count==0)
-                                throw new InvalidOperationException("Ядро AutoCAD не вернуло проекцию тела "+(i+1)+". Подробности в NPLOG. Резерв: FLATSHOT и NAIMPORTVIEW.");
-                            foreach(var e in projected)
-                            {
-                                var ext=e.GeometricExtents;
-                                bool onPlane=Math.Abs(ext.MinPoint.Y+z)<1e-5&&Math.Abs(ext.MaxPoint.Y+z)<1e-5;
-                                if(!onPlane)throw new InvalidOperationException("Ядро вернуло кривую вне плоскости проекции: "+e.GetType().Name+", Y="+ext.MinPoint.Y+".."+ext.MaxPoint.Y);
-                                edges.Add(new ProjectionVisibility.Edge(i,Flatten(e,shift),hidden));
-                            }
+                            if(ext.MaxPoint.Z>1e-7)clone.Slice(plane);
+                            result.Add(clone);
                         }
-                        finally {foreach(var e in all)e.Dispose();}
+                        catch{clone.Dispose();throw;}
+                    }
+                return result;
+            }
+            catch{foreach(var body in result)body.Dispose();throw;}
+        }
+        static void ProjectCurves(BlockTableRecord block,Transaction tr,Database db,List<Solid3d> bodies,ViewData data)
+        {
+            if(bodies.Count==0)return;
+            Diagnostics.Step("HLR: единая проекция "+bodies.Count+" тел");
+            var curves=NativeHlr.Project(bodies,data.Hidden);
+            try
+            {
+                int count=0;
+                foreach(var item in curves)
+                {
+                    if(item.Item2&&!data.Hidden)continue;
+                    using(var curve=Flatten(item.Item1,Matrix3d.Identity))
+                    {
+                        StoreCurve(block,tr,db,curve,item.Item2?HiddenLayer:VisibleLayer,item.Item2?PaperScale(data):1);
+                        count++;
                     }
                 }
-                Diagnostics.Step("Взаимная видимость: кривых "+edges.Count);
-                ProjectionVisibility.Write(block,tr,db,bodies,edges,data.Hidden,PaperScale(data));
+                Diagnostics.Step("HLR: сохранено кривых "+count);
+                if(count==0)throw new InvalidOperationException("HLR не вернул видимых контуров.");
             }
-            finally
+            finally{foreach(var item in curves)item.Item1.Dispose();}
+        }
+        // Independent scratch drawing for verifying the retained half using
+        // the host's FLATSHOT, without touching the original assembly.
+        internal static void ExportCut(Transaction tr,Dictionary<Guid,BlockReference> refs,RigidPlacement frame,string path)
+        {
+            if(System.IO.File.Exists(path))throw new InvalidOperationException("Файл уже существует. Выберите новое имя.");
+            var bodies=Bodies(tr,refs,ToLocal(frame));
+            try
             {
-                foreach(var edge in edges)edge.Curve.Dispose();
-                if(section!=null)
+                var clipped=ClipBehind(bodies);
+                try
                 {
-                    if(section.ObjectId.IsNull)section.Dispose();
-                    else if(!section.IsErased)section.Erase();
+                    if(clipped.Count==0)throw new InvalidOperationException("За секущей плоскостью нет тел.");
+                    using(var scratch=new Database(true,true))
+                    {
+                        scratch.Insunits=UnitsValue.Millimeters;
+                        using(var tx=scratch.TransactionManager.StartTransaction())
+                        {
+                            var space=AssemblyDrawing.ModelSpace(scratch,tx,OpenMode.ForWrite);
+                            foreach(var body in clipped)
+                            {
+                                var copy=(Solid3d)body.Clone();
+                                try
+                                {
+                                    copy.SetDatabaseDefaults(scratch);copy.Layer="0";
+                                    space.AppendEntity(copy);tx.AddNewlyCreatedDBObject(copy,true);
+                                }
+                                catch{if(copy.ObjectId.IsNull)copy.Dispose();throw;}
+                            }
+                            tx.Commit();
+                        }
+                        scratch.SaveAs(path,DwgVersion.Current);
+                    }
                 }
-                foreach(var copy in temporary)if(!copy.IsErased)copy.Erase();
+                finally{foreach(var body in clipped)body.Dispose();}
             }
+            finally{foreach(var body in bodies)body.Dispose();}
         }
         static ObjectId Build(Database db,Transaction tr,Dictionary<Guid,BlockReference> refs,ViewData data)
         {
@@ -336,7 +320,16 @@ namespace KotNode.AutoCAD
                 var bt=(BlockTable)tr.GetObject(db.BlockTableId,OpenMode.ForWrite);
                 var block=new BlockTableRecord{Name="NA_VIEW_"+Guid.NewGuid().ToString("N"),Units=UnitsValue.Millimeters};
                 var id=bt.Add(block);tr.AddNewlyCreatedDBObject(block,true);
-                if(data.IsSection)SectionCurves(block,tr,db,bodies,data);
+                if(data.IsSection)
+                {
+                    if(data.FullCut)
+                    {
+                        var clipped=ClipBehind(bodies);
+                        try{ProjectCurves(block,tr,db,clipped,data);}
+                        finally{foreach(var body in clipped)body.Dispose();}
+                    }
+                    SectionCurves(block,tr,db,bodies,data);
+                }
                 else ProjectCurves(block,tr,db,bodies,data);
                 if(!block.Cast<ObjectId>().Any())throw new InvalidOperationException("Представление пустое. Проверьте секущую плоскость.");
                 return id;

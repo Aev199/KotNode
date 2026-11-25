@@ -364,16 +364,17 @@ namespace KotNode.AutoCAD
             var frame=new RigidPlacement {Origin=origin,AxisX=new Vector3(x.X,x.Y,x.Z),AxisY=new Vector3(y.X,y.Y,y.Z)};
             frame.Validate();return frame;
         }
-        static void AddView(Document doc,Transaction tr,bool section)
+        static void AddView(Document doc,Transaction tr,bool section,bool fullCut=false)
         {
             var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
             if(refs.Count==0)throw new InvalidOperationException("В марке нет деталей.");
+            if(!section||fullCut)NativeHlr.Require();
             var frame=ViewFrame(doc,m,section);if(frame==null)return;
-            var name=Text(doc.Editor,section?"Название сечения (например, 1-1): ":"Название вида (например, Вид А): ");
+            var name=Text(doc.Editor,fullCut?"Название разреза (например, 1-1): ":section?"Название сечения (например, 1-1): ":"Название вида (например, Вид А): ");
             if(name==null)return;
             if(string.IsNullOrWhiteSpace(name))throw new InvalidOperationException("Укажите название представления.");
             bool hidden=false;
-            if(!section)
+            if(!section||fullCut)
             {
                 var option=new PromptKeywordOptions("\nПоказывать невидимые линии? [Yes/No] <No>: ");
                 option.Keywords.Add("Yes");option.Keywords.Add("No");option.Keywords.Default="No";option.AllowNone=true;
@@ -399,7 +400,7 @@ namespace KotNode.AutoCAD
             if(p.Status!=PromptStatus.OK)return;
             var location=p.Value.TransformBy(doc.Editor.CurrentUserCoordinateSystem);
             Diagnostics.Step(section?"Построение точного сечения":"Проекция тел AutoCAD");
-            AssemblyViews.Create(doc.Database,tr,m,refs,new AssemblyViews.ViewData{Name=name,Frame=frame,IsSection=section,Hidden=hidden,NoHatch=noHatch,AnnotationScale=annotationScale},location);
+            AssemblyViews.Create(doc.Database,tr,m,refs,new AssemblyViews.ViewData{Name=name,Frame=frame,IsSection=section,FullCut=fullCut,Hidden=hidden,NoHatch=noHatch,AnnotationScale=annotationScale},location);
             AssemblyDrawing.Save(doc.Database,tr,m);
             doc.Editor.WriteMessage("\nПредставление создано. Геометрия 1:1; масштаб печати задаётся на листе.");
         }
@@ -420,7 +421,25 @@ namespace KotNode.AutoCAD
         [CommandMethod("NAVIEW",CommandFlags.Modal)]
         public void View()=>Run("NAVIEW",(doc,tr)=>AddView(doc,tr,false));
         [CommandMethod("NASECTION",CommandFlags.Modal)]
-        public void SectionView()=>Run("NASECTION",(doc,tr)=>AddView(doc,tr,true));
+        public void SectionView()=>Run("NASECTION",(doc,tr)=>AddView(doc,tr,true,true));
+        [CommandMethod("NACROSS",CommandFlags.Modal)]
+        public void CrossView()=>Run("NACROSS",(doc,tr)=>AddView(doc,tr,true));
+        [CommandMethod("NAHLRSTATUS",CommandFlags.Modal)]
+        public void HlrStatus()=>Run("NAHLRSTATUS",(doc,tr)=>{
+            NativeHlr.Require();
+            doc.Editor.WriteMessage("\nКомпонент HLR загружен. Для проверки вычисления создайте NAVIEW.");
+        });
+        [CommandMethod("NAEXPORTCUT",CommandFlags.Modal)]
+        public void ExportCut()=>Run("NAEXPORTCUT",(doc,tr)=>{
+            var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
+            var frame=ViewFrame(doc,m,true);if(frame==null)return;
+            using(var dialog=new System.Windows.Forms.SaveFileDialog{Filter="AutoCAD DWG (*.dwg)|*.dwg",DefaultExt="dwg",AddExtension=true,OverwritePrompt=true,FileName="KotNode-cut.dwg"})
+            {
+                if(dialog.ShowDialog()!=System.Windows.Forms.DialogResult.OK)return;
+                AssemblyViews.ExportCut(tr,refs,frame,dialog.FileName);
+                doc.Editor.WriteMessage("\nСоздан отдельный DWG с оставшейся за плоскостью моделью. Откройте его, установите вид Top и выполните FLATSHOT.");
+            }
+        });
         [CommandMethod("NAEDITVIEW",CommandFlags.Modal)]
         public void EditView()=>Run("NAEDITVIEW",(doc,tr)=>{
             var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
@@ -434,7 +453,7 @@ namespace KotNode.AutoCAD
                 form.TextField("Название","name",data.Name);
                 form.Number("Масштаб оформления 1:","scale",data.AnnotationScale>0?data.AnnotationScale:20);
                 if(data.IsSection)form.Check("Штриховать сечение","hatch",!data.NoHatch);
-                else form.Check("Невидимые линии","hidden",data.Hidden);
+                if(!data.IsSection||data.FullCut)form.Check("Невидимые линии","hidden",data.Hidden);
                 form.Check("Задать плоскость заново","plane",false);
                 form.ValidateFields=()=>{
                     var name=form.Get("name").Trim();var scale=form.Value("scale");
@@ -443,7 +462,8 @@ namespace KotNode.AutoCAD
                 };
                 if(AcApp.ShowModalDialog(form)!=DialogResult.OK)return;
                 data.Name=form.Get("name").Trim();data.AnnotationScale=form.Value("scale");
-                if(data.IsSection)data.NoHatch=!form.Checked("hatch");else data.Hidden=form.Checked("hidden");
+                if(data.IsSection)data.NoHatch=!form.Checked("hatch");
+                if(!data.IsSection||data.FullCut)data.Hidden=form.Checked("hidden");
                 if(form.Checked("plane"))
                 {
                     var frame=ViewFrame(doc,m,data.IsSection);if(frame==null)return;
@@ -506,7 +526,7 @@ namespace KotNode.AutoCAD
                         foreach(var view in views)
                         {
                             var stale=AssemblyViews.IsStale(view.Data,hash);
-                            var node=branch.Nodes.Add((view.Data.IsSection?"Сечение: ":"Вид: ")+view.Data.Name+(view.Data.ManualSnapshot?" [FLATSHOT]":"")+(stale?" [обновить]":""));
+                            var node=branch.Nodes.Add((view.Data.FullCut?"Разрез: ":view.Data.IsSection?"Сечение: ":"Вид: ")+view.Data.Name+(view.Data.ManualSnapshot?" [FLATSHOT]":"")+(stale?" [обновить]":""));
                             node.Tag=view.Data.Id.ToString("D");
                             node.ToolTipText=(stale?"Требуется перестроение. ":"Представление актуально. ")+"Масштаб оформления 1:"+(view.Data.AnnotationScale>0?view.Data.AnnotationScale:20);
                             if((string)node.Tag==previous)selected=node;
@@ -630,7 +650,7 @@ namespace KotNode.AutoCAD
                 tree=new System.Windows.Forms.TreeView {Dock=DockStyle.Fill,HideSelection=false,ShowNodeToolTips=true};layout.Controls.Add(tree,0,1);
                 treeStatus=new Label {AutoSize=true,MaximumSize=new Size(300,0)};layout.Controls.Add(treeStatus,0,2);
                 var panel=new FlowLayoutPanel {Dock=DockStyle.Fill,AutoSize=true,FlowDirection=System.Windows.Forms.FlowDirection.LeftToRight,WrapContents=true,Padding=new Padding(1)};
-                foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Труба","NAPIPE"},new[]{"Лист","NAPLATE"},new[]{"Лист по контуру","NAPOLYPLATE"},new[]{"Кривой лист","NACURVED"},new[]{"Двутавр","NABEAM"},new[]{"Арматура","NAREBAR"},new[]{"Вспом. чертёж","NAAUX"},new[]{"Создать вид","NAVIEW"},new[]{"Импорт FLATSHOT","NAIMPORTVIEW"},new[]{"Создать сечение","NASECTION"},new[]{"Свойства вида","NAEDITVIEW"},new[]{"Обновить вид","NAUPDATEVIEW"},new[]{"Обновить виды","NAUPDATEVIEWS"},new[]{"Свойства","NAEDIT"},new[]{"Копировать","NACOPY"},new[]{"Линейный массив","NAARRAY"},new[]{"Отделить","NADETACH"},new[]{"Удалить","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"},new[]{"Восстановить","NAREPAIR"},new[]{"Обновить дерево","NAREFRESH"}})
+                foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Труба","NAPIPE"},new[]{"Лист","NAPLATE"},new[]{"Лист по контуру","NAPOLYPLATE"},new[]{"Кривой лист","NACURVED"},new[]{"Двутавр","NABEAM"},new[]{"Арматура","NAREBAR"},new[]{"Вспом. чертёж","NAAUX"},new[]{"Создать вид","NAVIEW"},new[]{"Импорт FLATSHOT","NAIMPORTVIEW"},new[]{"Создать разрез","NASECTION"},new[]{"Чистое сечение","NACROSS"},new[]{"Экспорт отсечённой модели","NAEXPORTCUT"},new[]{"Свойства вида","NAEDITVIEW"},new[]{"Обновить вид","NAUPDATEVIEW"},new[]{"Обновить виды","NAUPDATEVIEWS"},new[]{"Свойства","NAEDIT"},new[]{"Копировать","NACOPY"},new[]{"Линейный массив","NAARRAY"},new[]{"Отделить","NADETACH"},new[]{"Удалить","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"},new[]{"Восстановить","NAREPAIR"},new[]{"Обновить дерево","NAREFRESH"}})
                 {
                     var cmd=pair[1];var button=new Button {Text=pair[0],AutoSize=true};
                     button.Click+=(s,e)=>Queue(cmd);panel.Controls.Add(button);
