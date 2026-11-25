@@ -48,6 +48,7 @@ class Program
   } finally { Directory.Delete(dir,true); }
   Console.WriteLine(checks+" core checks passed");
   TableMergeTests.Run();
+  AssemblyModelTests.Run();
   DraftingTests.Run(Path.Combine(AppContext.BaseDirectory,"fixtures","lisp07.json"));
   if(args.Length==2 && args[0]=="--scene")File.WriteAllText(args[1],Json.Write(new[]{Drafting.Build(m,"main",20),Drafting.Build(m,"section",20)}));
   if(args.Length==2 && args[0]=="--demo") { p.Code="DEMO-01";p.Name="Ограждение котлована — пример";new ProjectStore(args[1]).Save(p);Console.WriteLine("Demo plate mass: "+g.PlateMass.ToString("0.000000")); }

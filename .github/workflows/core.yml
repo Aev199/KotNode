@@ -1,0 +1,17 @@
+name: Core regression tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  core:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: dotnet run --project tests/KotNode.Tests.csproj -c Release
+      - run: dotnet build src/Core/KotNode.Core.csproj -c Release -f net48

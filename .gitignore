@@ -3,3 +3,6 @@
 *.user
 *.lock
 *.bak
+
+/plugin/
+**/__pycache__/
