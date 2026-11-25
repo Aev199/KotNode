@@ -93,7 +93,7 @@ namespace KotNode.AutoCAD
         }
         // Native MOVE/ROTATE are read back on the next constructor command.
         // Ordinary COPY is detached; an erased managed reference must be restored with UNDO.
-        internal static Dictionary<Guid,BlockReference> Synchronize(Database db,Transaction tr,AssemblyMark mark)
+        internal static Dictionary<Guid,BlockReference> Synchronize(Database db,Transaction tr,AssemblyMark mark,bool restoreMissing=false)
         {
             var result=new Dictionary<Guid,BlockReference>();
             foreach(ObjectId id in ModelSpace(db,tr))
@@ -109,10 +109,25 @@ namespace KotNode.AutoCAD
             foreach(var instance in mark.Instances)
             {
                 if(!result.TryGetValue(instance.Id,out var reference))
-                    throw new InvalidOperationException("Деталь удалена обычной командой. Восстановите её через UNDO или выполните NADELETE вместо ERASE.");
+                {
+                    if(!restoreMissing)
+                        throw new InvalidOperationException("Деталь удалена обычной командой. Восстановите её через UNDO или NAREPAIR.");
+                    continue;
+                }
                 instance.Placement=Placement(reference);
             }
             mark.Validate();
+            if(restoreMissing)
+            {
+                // Restore only missing managed instances at their last saved positions.
+                foreach(var instance in mark.Instances.Where(i=>!result.ContainsKey(i.Id)))
+                {
+                    var definition=mark.Parts.Single(p=>p.Id==instance.PartId);
+                    var shared=mark.Instances.Where(i=>i.PartId==instance.PartId && result.ContainsKey(i.Id)).Select(i=>result[i.Id]).FirstOrDefault();
+                    var geometry=shared==null?Geometry(db,tr,definition):shared.BlockTableRecord;
+                    result.Add(instance.Id,Insert(db,tr,mark,instance,geometry));
+                }
+            }
             return result;
         }
         static Region MakeRegion(Curve curve)
