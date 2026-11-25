@@ -53,6 +53,7 @@ namespace KotNode.AutoCAD
             // Zero is legacy default; use 20 as annotation/printing scale.
             public double AnnotationScale { get; set; }
             public bool NoHatch { get; set; }
+            public bool ParametricPrototype { get; set; }
             public bool ManualSnapshot { get; set; }
             public int GeneratorRevision { get; set; }
             public RigidPlacement Frame { get; set; }
@@ -309,9 +310,10 @@ namespace KotNode.AutoCAD
             }
             finally{foreach(var body in bodies)body.Dispose();}
         }
-        static ObjectId Build(Database db,Transaction tr,Dictionary<Guid,BlockReference> refs,ViewData data)
+        static ObjectId Build(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs,ViewData data)
         {
             Layers(db,tr);
+            if(data.ParametricPrototype)return ParametricViewDrawing.Build(db,tr,mark,data);
             if(refs.Count==0)throw new InvalidOperationException("В марке нет деталей для представления.");
             var bodies=Bodies(tr,refs,ToLocal(data.Frame));
             try
@@ -339,7 +341,7 @@ namespace KotNode.AutoCAD
         internal static void Create(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs,ViewData data,Point3d location)
         {
             data.MarkId=mark.Id;data.SourceHash=Signature(mark);data.GeneratorRevision=Revision;
-            var geometry=Build(db,tr,refs,data);
+            var geometry=Build(db,tr,mark,refs,data);
             var reference=new BlockReference(new Point3d(location.X,location.Y,0),geometry);
             reference.SetDatabaseDefaults(db);
             var space=AssemblyDrawing.ModelSpace(db,tr,OpenMode.ForWrite);
@@ -435,7 +437,7 @@ namespace KotNode.AutoCAD
         internal static void Rebuild(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs,Entry entry)
         {
             if(entry.Data.ManualSnapshot)throw new InvalidOperationException("Снимки FLATSHOT нельзя обновлять автоматически. Выполните NAVIEW/NASECTION, затем NAFLATFINISH.");
-            var geometry=Build(db,tr,refs,entry.Data);
+            var geometry=Build(db,tr,mark,refs,entry.Data);
             AssemblyDrawing.Replace(entry.Reference,geometry);
             entry.Data.SourceHash=Signature(mark);entry.Data.GeneratorRevision=Revision;entry.Data.ManualSnapshot=false;
             Save(entry.Reference,tr,entry.Data);

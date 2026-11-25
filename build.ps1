@@ -12,5 +12,7 @@ try {
     Copy-Item src/Core/bin/Release/net48/KotNode.Core.dll plugin -Force
     Copy-Item src/AutoCAD/bin/Release/net48/KotNode.AutoCAD.pdb plugin -Force
     Copy-Item src/Core/bin/Release/net48/KotNode.Core.pdb plugin -Force
+    Copy-Item docs/prototype/README_RU.md plugin/README_RU.md -Force
+    Copy-Item docs/prototype/preview.png plugin/preview.png -Force
     Write-Host 'Ready: plugin/KotNode.AutoCAD.dll. Load with NETLOAD in AutoCAD 2021.'
 } finally { Pop-Location }

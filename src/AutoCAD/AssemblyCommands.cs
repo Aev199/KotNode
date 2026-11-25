@@ -364,11 +364,11 @@ namespace KotNode.AutoCAD
             var frame=new RigidPlacement {Origin=origin,AxisX=new Vector3(x.X,x.Y,x.Z),AxisY=new Vector3(y.X,y.Y,y.Z)};
             frame.Validate();return frame;
         }
-        static void AddView(Document doc,Transaction tr,bool section,bool fullCut=false)
+        static void AddView(Document doc,Transaction tr,bool section,bool fullCut=false,bool parametric=false)
         {
             var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
             if(refs.Count==0)throw new InvalidOperationException("В марке нет деталей.");
-            if(!section||fullCut)NativeHlr.Require();
+            if(!parametric&&(!section||fullCut))NativeHlr.Require();
             var frame=ViewFrame(doc,m,section);if(frame==null)return;
             var name=Text(doc.Editor,fullCut?"Название разреза (например, 1-1): ":section?"Название сечения (например, 1-1): ":"Название вида (например, Вид А): ");
             if(name==null)return;
@@ -399,8 +399,8 @@ namespace KotNode.AutoCAD
             var p=doc.Editor.GetPoint("\nТочка размещения плоского изображения (XY мировой системы): ");
             if(p.Status!=PromptStatus.OK)return;
             var location=p.Value.TransformBy(doc.Editor.CurrentUserCoordinateSystem);
-            Diagnostics.Step(section?"Построение точного сечения":"Проекция тел AutoCAD");
-            AssemblyViews.Create(doc.Database,tr,m,refs,new AssemblyViews.ViewData{Name=name,Frame=frame,IsSection=section,FullCut=fullCut,Hidden=hidden,NoHatch=noHatch,AnnotationScale=annotationScale},location);
+            Diagnostics.Step(parametric?"Проекция из параметров деталей":section?"Построение точного сечения":"Проекция тел AutoCAD");
+            AssemblyViews.Create(doc.Database,tr,m,refs,new AssemblyViews.ViewData{Name=name,Frame=frame,IsSection=section,FullCut=fullCut,Hidden=hidden,NoHatch=noHatch,AnnotationScale=annotationScale,ParametricPrototype=parametric},location);
             AssemblyDrawing.Save(doc.Database,tr,m);
             doc.Editor.WriteMessage("\nПредставление создано. Геометрия 1:1; масштаб печати задаётся на листе.");
         }
@@ -418,6 +418,43 @@ namespace KotNode.AutoCAD
             AssemblyDrawing.Save(doc.Database,tr,m);
             doc.Editor.WriteMessage("\nРучной снимок добавлен в дерево. При изменении модели его нужно перестроить или заменить.");
         });
+        [CommandMethod("NAPDEMO",CommandFlags.Modal)]
+        public void ParametricDemo()=>Run("NAPDEMO",(doc,tr)=>{
+            if(AssemblyDrawing.Load(doc.Database,tr)!=null)
+                throw new InvalidOperationException("Для примера откройте новый DWG без марки. Существующая марка не изменена.");
+            var mark=new AssemblyMark{Code="ПРОБА-01",Name="Проверка параметрических видов"};
+            mark.AddPart(new PartDefinition{Name="Труба 100×10",Kind=PartKind.Pipe,Pipe=new PipeShape{OuterDiameter=100,Thickness=10,Length=200}},
+                new RigidPlacement{Origin=new Vector3(0,0,-100)});
+            mark.AddPart(new PartDefinition{Name="Передняя пластина",Kind=PartKind.RectangularPlate,Plate=new RectangularPlateShape{Length=60,Width=120,Thickness=10}},
+                new RigidPlacement{Origin=new Vector3(0,-60,120)});
+            mark.AddPart(new PartDefinition{Name="Пластина внутри полости",Kind=PartKind.RectangularPlate,Plate=new RectangularPlateShape{Length=10,Width=10,Thickness=10}},
+                new RigidPlacement{Origin=new Vector3(-5,-5,-40)});
+            var refs=new Dictionary<Guid,BlockReference>();
+            foreach(var instance in mark.Instances)
+            {
+                var definition=mark.Parts.Single(p=>p.Id==instance.PartId);
+                var geometry=AssemblyDrawing.Geometry(doc.Database,tr,definition);
+                var reference=AssemblyDrawing.Insert(doc.Database,tr,mark,instance,geometry);
+                refs.Add(instance.Id,reference);
+            }
+            var frames=new[]{new RigidPlacement(),new RigidPlacement{AxisX=new Vector3(1,0,0),AxisY=new Vector3(0,0,1)}};
+            for(int i=0;i<4;i++)
+            {
+                string name=new[]{"Вид вдоль трубы","Вид сбоку","Поперечный разрез","Продольный разрез"}[i];
+                double x=250+(i%2)*250,y=i<2?0:-300;
+                AssemblyViews.Create(doc.Database,tr,mark,refs,new AssemblyViews.ViewData{
+                    Name=name,Frame=frames[i%2],IsSection=i>=2,FullCut=i>=2,Hidden=true,AnnotationScale=1,ParametricPrototype=true},new Point3d(x,y,0));
+                var label=new DBText{TextString=name,Height=5,Position=new Point3d(x-50,y-130,0)};
+                label.SetDatabaseDefaults(doc.Database);
+                AssemblyDrawing.ModelSpace(doc.Database,tr,OpenMode.ForWrite).AppendEntity(label);tr.AddNewlyCreatedDBObject(label,true);
+            }
+            AssemblyDrawing.Save(doc.Database,tr,mark);
+            doc.Editor.WriteMessage("\nСозданы труба, две пластины, два вида и два разреза. Выполните _ZOOM _Extents. Для обновления — NAUPDATEVIEWS.");
+        });
+        [CommandMethod("NAPVIEW",CommandFlags.Modal)]
+        public void ParametricView()=>Run("NAPVIEW",(doc,tr)=>AddView(doc,tr,false,false,true));
+        [CommandMethod("NAPSECTION",CommandFlags.Modal)]
+        public void ParametricSection()=>Run("NAPSECTION",(doc,tr)=>AddView(doc,tr,true,true,true));
         [CommandMethod("NAVIEW",CommandFlags.Modal)]
         public void View()=>Run("NAVIEW",(doc,tr)=>FlatshotWorkflow.Prepare(doc,tr,false));
         [CommandMethod("NASECTION",CommandFlags.Modal)]

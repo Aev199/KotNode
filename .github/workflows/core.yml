@@ -30,7 +30,7 @@ jobs:
           Get-ChildItem plugin -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $([IO.Path]::GetFileName($_.Path))" } | Set-Content plugin/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: KotNode-AutoCAD2021-FLATSHOT-experimental
+          name: KotNode-AutoCAD2021-parametric-prototype
           path: plugin/
           if-no-files-found: error
           retention-days: 7
