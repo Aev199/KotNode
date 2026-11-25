@@ -100,7 +100,7 @@ namespace KotNode.AutoCAD
         static string NextPosition(AssemblyMark m)
         {
             int n=1;
-            while(m.Parts.Any(p=>string.Equals(p.Position.Trim(),n.ToString(),StringComparison.OrdinalIgnoreCase)))n++;
+            while(m.Parts.Any(p=>string.Equals((p.Position??"").Trim(),n.ToString(),StringComparison.OrdinalIgnoreCase)))n++;
             return n.ToString();
         }
         static void Add(Document doc,Transaction tr,bool pipe)
@@ -125,7 +125,7 @@ namespace KotNode.AutoCAD
             {
                 var panel=new FlowLayoutPanel {Dock=DockStyle.Fill,AutoScroll=true,FlowDirection=FlowDirection.TopDown,WrapContents=false,Padding=new Padding(8)};
                 panel.Controls.Add(new Label {Text="Экспериментальный конструктор\nОдна марка на DWG • модель 1:1",AutoSize=true});
-                foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Добавить трубу","NAPIPE"},new[]{"Добавить лист","NAPLATE"},new[]{"Свойства детали","NAEDIT"},new[]{"Копировать экземпляр","NACOPY"},new[]{"Отделить позицию","NADETACH"},new[]{"Удалить экземпляр","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"}})
+                foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Добавить трубу","NAPIPE"},new[]{"Добавить лист","NAPLATE"},new[]{"Свойства детали","NAEDIT"},new[]{"Копировать экземпляр","NACOPY"},new[]{"Отделить позицию","NADETACH"},new[]{"Удалить экземпляр","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"},new[]{"Восстановить удалённое","NAREPAIR"}})
                 {
                     var cmd=pair[1];
                     var button=new Button {Text=pair[0],Width=210,Height=32};
@@ -198,6 +198,16 @@ namespace KotNode.AutoCAD
             if(!m.Instances.Any(i=>i.PartId==part))m.RemoveUnusedDefinition(part);
             var reference=refs[id.Value];reference.UpgradeOpen();reference.Erase();
             AssemblyDrawing.Save(doc.Database,tr,m);
+        });
+        [CommandMethod("NAREPAIR",CommandFlags.Modal)]
+        public void Repair()=>Run("NAREPAIR",(doc,tr)=>{
+            var m=Need(doc,tr);
+            var options=new PromptKeywordOptions("\nВосстановить отсутствующие детали из сохраненной модели? [Yes/No] <No>: ");
+            options.Keywords.Add("Yes");options.Keywords.Add("No");options.Keywords.Default="No";
+            var answer=doc.Editor.GetKeywords(options);
+            if(answer.Status!=PromptStatus.OK||answer.StringResult!="Yes")return;
+            AssemblyDrawing.Synchronize(doc.Database,tr,m,true);AssemblyDrawing.Save(doc.Database,tr,m);
+            doc.Editor.WriteMessage("\nПроверка и восстановление завершены.");
         });
         [CommandMethod("NAINFO",CommandFlags.Modal)]
         public void Info()=>Run("NAINFO",(doc,tr)=>{
