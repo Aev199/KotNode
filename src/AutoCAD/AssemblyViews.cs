@@ -307,18 +307,18 @@ namespace KotNode.AutoCAD
             space.AppendEntity(reference);tr.AddNewlyCreatedDBObject(reference,true);
             Save(reference,tr,data);
         }
+        internal static void Rebuild(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs,Entry entry)
+        {
+            var geometry=Build(db,tr,refs,entry.Data);
+            AssemblyDrawing.Replace(entry.Reference,geometry);
+            entry.Data.SourceHash=Signature(mark);entry.Data.GeneratorRevision=Revision;
+            Save(entry.Reference,tr,entry.Data);
+        }
         internal static int Update(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs,Guid? only=null)
         {
             var entries=Find(db,tr,mark).Where(e=>!only.HasValue||e.Data.Id==only.Value).ToList();
             if(only.HasValue&&entries.Count==0)throw new InvalidOperationException("Представление не найдено.");
-            string hash=Signature(mark);
-            foreach(var entry in entries)
-            {
-                var geometry=Build(db,tr,refs,entry.Data);
-                AssemblyDrawing.Replace(entry.Reference,geometry);
-                entry.Data.SourceHash=hash;entry.Data.GeneratorRevision=Revision;
-                Save(entry.Reference,tr,entry.Data);
-            }
+            foreach(var entry in entries)Rebuild(db,tr,mark,refs,entry);
             return entries.Count;
         }
     }

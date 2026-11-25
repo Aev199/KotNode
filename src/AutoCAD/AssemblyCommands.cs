@@ -331,16 +331,19 @@ namespace KotNode.AutoCAD
         static RigidPlacement ViewFrame(Document doc,AssemblyMark mark,bool section)
         {
             var ed=doc.Editor;
-            var options=new PromptKeywordOptions("\nПлоскость представления [Top/Front/Right/UCS] <Top>: ");
-            foreach(var keyword in new[]{"Top","Front","Right","UCS"})options.Keywords.Add(keyword);
+            var options=new PromptKeywordOptions("\nПлоскость представления [Top/Bottom/Front/Back/Right/Left/UCS] <Top>: ");
+            foreach(var keyword in new[]{"Top","Bottom","Front","Back","Right","Left","UCS"})options.Keywords.Add(keyword);
             options.Keywords.Default="Top";options.AllowNone=true;
             var answer=ed.GetKeywords(options);
             if(answer.Status!=PromptStatus.OK&&answer.Status!=PromptStatus.None)return null;
             Vector3d x=Vector3d.XAxis,y=Vector3d.YAxis;
             switch(answer.StringResult)
             {
+                case "Bottom": y=-Vector3d.YAxis;break;
                 case "Front": y=Vector3d.ZAxis;break;
+                case "Back": x=-Vector3d.XAxis;y=Vector3d.ZAxis;break;
                 case "Right": x=Vector3d.YAxis;y=Vector3d.ZAxis;break;
+                case "Left": x=-Vector3d.YAxis;y=Vector3d.ZAxis;break;
                 case "UCS":
                     x=Vector3d.XAxis.TransformBy(ed.CurrentUserCoordinateSystem);
                     y=Vector3d.YAxis.TransformBy(ed.CurrentUserCoordinateSystem);break;
@@ -391,6 +394,7 @@ namespace KotNode.AutoCAD
             var scale=doc.Editor.GetDouble(scaleOptions);
             if(scale.Status!=PromptStatus.OK&&scale.Status!=PromptStatus.None)return;
             double annotationScale=scale.Status==PromptStatus.None?20:scale.Value;
+            if(double.IsNaN(annotationScale)||double.IsInfinity(annotationScale)||annotationScale<=0||annotationScale>1000)throw new InvalidOperationException("Масштаб оформления должен быть положительным и не более 1000.");
             var p=doc.Editor.GetPoint("\nТочка размещения плоского изображения (XY мировой системы): ");
             if(p.Status!=PromptStatus.OK)return;
             var location=p.Value.TransformBy(doc.Editor.CurrentUserCoordinateSystem);
@@ -403,6 +407,38 @@ namespace KotNode.AutoCAD
         public void View()=>Run("NAVIEW",(doc,tr)=>AddView(doc,tr,false));
         [CommandMethod("NASECTION",CommandFlags.Modal)]
         public void SectionView()=>Run("NASECTION",(doc,tr)=>AddView(doc,tr,true));
+        [CommandMethod("NAEDITVIEW",CommandFlags.Modal)]
+        public void EditView()=>Run("NAEDITVIEW",(doc,tr)=>{
+            var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
+            var picked=doc.Editor.GetEntity("\nВыберите вид или сечение: ");
+            if(picked.Status!=PromptStatus.OK)return;
+            var entry=AssemblyViews.Find(doc.Database,tr,m).SingleOrDefault(e=>e.Reference.ObjectId==picked.ObjectId);
+            if(entry==null)throw new InvalidOperationException("Выберите представление марки.");
+            var data=entry.Data;
+            using(var form=new Fields("Свойства представления"))
+            {
+                form.TextField("Название","name",data.Name);
+                form.Number("Масштаб оформления 1:","scale",data.AnnotationScale>0?data.AnnotationScale:20);
+                if(data.IsSection)form.Check("Штриховать сечение","hatch",!data.NoHatch);
+                else form.Check("Невидимые линии","hidden",data.Hidden);
+                form.Check("Задать плоскость заново","plane",false);
+                form.ValidateFields=()=>{
+                    var name=form.Get("name").Trim();var scale=form.Value("scale");
+                    if(string.IsNullOrWhiteSpace(name)||double.IsNaN(scale)||double.IsInfinity(scale)||scale<=0||scale>1000)
+                        throw new InvalidOperationException("Введите название и масштаб от 0 до 1000.");
+                };
+                if(AcApp.ShowModalDialog(form)!=DialogResult.OK)return;
+                data.Name=form.Get("name").Trim();data.AnnotationScale=form.Value("scale");
+                if(data.IsSection)data.NoHatch=!form.Checked("hatch");else data.Hidden=form.Checked("hidden");
+                if(form.Checked("plane"))
+                {
+                    var frame=ViewFrame(doc,m,data.IsSection);if(frame==null)return;
+                    data.Frame=frame;
+                }
+            }
+            AssemblyViews.Rebuild(doc.Database,tr,m,refs,entry);
+            AssemblyDrawing.Save(doc.Database,tr,m);
+        });
         [CommandMethod("NAUPDATEVIEWS",CommandFlags.Modal)]
         public void UpdateViews()=>Run("NAUPDATEVIEWS",(doc,tr)=>{
             var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
@@ -580,7 +616,7 @@ namespace KotNode.AutoCAD
                 tree=new System.Windows.Forms.TreeView {Dock=DockStyle.Fill,HideSelection=false,ShowNodeToolTips=true};layout.Controls.Add(tree,0,1);
                 treeStatus=new Label {AutoSize=true,MaximumSize=new Size(300,0)};layout.Controls.Add(treeStatus,0,2);
                 var panel=new FlowLayoutPanel {Dock=DockStyle.Fill,AutoSize=true,FlowDirection=System.Windows.Forms.FlowDirection.LeftToRight,WrapContents=true,Padding=new Padding(1)};
-                foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Труба","NAPIPE"},new[]{"Лист","NAPLATE"},new[]{"Лист по контуру","NAPOLYPLATE"},new[]{"Кривой лист","NACURVED"},new[]{"Двутавр","NABEAM"},new[]{"Арматура","NAREBAR"},new[]{"Вспом. чертёж","NAAUX"},new[]{"Создать вид","NAVIEW"},new[]{"Создать сечение","NASECTION"},new[]{"Обновить вид","NAUPDATEVIEW"},new[]{"Обновить виды","NAUPDATEVIEWS"},new[]{"Свойства","NAEDIT"},new[]{"Копировать","NACOPY"},new[]{"Линейный массив","NAARRAY"},new[]{"Отделить","NADETACH"},new[]{"Удалить","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"},new[]{"Восстановить","NAREPAIR"},new[]{"Обновить дерево","NAREFRESH"}})
+                foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Труба","NAPIPE"},new[]{"Лист","NAPLATE"},new[]{"Лист по контуру","NAPOLYPLATE"},new[]{"Кривой лист","NACURVED"},new[]{"Двутавр","NABEAM"},new[]{"Арматура","NAREBAR"},new[]{"Вспом. чертёж","NAAUX"},new[]{"Создать вид","NAVIEW"},new[]{"Создать сечение","NASECTION"},new[]{"Свойства вида","NAEDITVIEW"},new[]{"Обновить вид","NAUPDATEVIEW"},new[]{"Обновить виды","NAUPDATEVIEWS"},new[]{"Свойства","NAEDIT"},new[]{"Копировать","NACOPY"},new[]{"Линейный массив","NAARRAY"},new[]{"Отделить","NADETACH"},new[]{"Удалить","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"},new[]{"Восстановить","NAREPAIR"},new[]{"Обновить дерево","NAREFRESH"}})
                 {
                     var cmd=pair[1];var button=new Button {Text=pair[0],AutoSize=true};
                     button.Click+=(s,e)=>Queue(cmd);panel.Controls.Add(button);
