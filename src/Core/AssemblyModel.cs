@@ -205,7 +205,9 @@ namespace KotNode.Core
                 case PartKind.RectangularPlate: volume = Plate.Length * Plate.Width * Plate.Thickness; break;
                 case PartKind.CurvedPlate: volume = CurvedPlate.AngleRadians * CurvedPlate.Thickness * (CurvedPlate.InnerRadius + CurvedPlate.Thickness / 2) * CurvedPlate.Length; break;
                 case PartKind.PolygonPlate: volume = PolygonPlate.NetAreaMm2() * PolygonPlate.Thickness; break;
-                case PartKind.IBeam: volume = IBeam.AreaMm2() * IBeam.Length; break;
+                case PartKind.IBeam:
+                    if(IBeam.CatalogMassKgPerM.HasValue) { double nominal=IBeam.CatalogMassKgPerM.Value*IBeam.Length/1000; Guard.Require(Guard.Positive(nominal), "Неверная масса двутавра."); return nominal; }
+                    volume = IBeam.AreaMm2() * IBeam.Length; break;
                 case PartKind.Rebar: volume = Math.PI * Rebar.Diameter * Rebar.Diameter / 4 * Rebar.CenterlineLengthMm(); break;
                 default: throw new InvalidDataException("Неизвестный тип детали.");
             }
@@ -371,14 +373,19 @@ namespace KotNode.Core
         public double FlangeThickness { get; set; }
         public double Length { get; set; }
         public double? CatalogAreaMm2 { get; set; }
+        public double RootRadius { get; set; }
+        public double? CatalogMassKgPerM { get; set; }
+        public string CatalogStandard { get; set; }
         public void Validate()
         {
             Guard.Require(Guard.Positive(Height) && Guard.Positive(Width) && Guard.Positive(WebThickness) && Guard.Positive(FlangeThickness) && Guard.Positive(Length)
                 && WebThickness < Width && FlangeThickness < Height/2, "Неверные размеры двутавра.");
+            Guard.Require(Guard.Finite(RootRadius)&&RootRadius>=0&&RootRadius<=(Width-WebThickness)/2&&2*RootRadius<=Height-2*FlangeThickness,"Неверный радиус сопряжения.");
+            Guard.Require(!CatalogMassKgPerM.HasValue || (Guard.Positive(CatalogMassKgPerM.Value)&&Guard.Text(CatalogStandard)&&CatalogAreaMm2.HasValue),"Неверная масса сортамента.");
             Guard.Require(!CatalogAreaMm2.HasValue || (Guard.Text(Profile) && Guard.Positive(CatalogAreaMm2.Value) && CatalogAreaMm2.Value <= Height*Width), "Неверная площадь сортамента.");
-            Guard.Require(Guard.Positive(CatalogAreaMm2 ?? (2*Width*FlangeThickness+(Height-2*FlangeThickness)*WebThickness)), "Неверная площадь двутавра.");
+            Guard.Require(Guard.Positive(CatalogAreaMm2 ?? (2*Width*FlangeThickness+(Height-2*FlangeThickness)*WebThickness+(4-Math.PI)*RootRadius*RootRadius)), "Неверная площадь двутавра.");
         }
-        public double AreaMm2() { Validate(); return CatalogAreaMm2 ?? (2*Width*FlangeThickness+(Height-2*FlangeThickness)*WebThickness); }
+        public double AreaMm2() { Validate(); return CatalogAreaMm2 ?? (2*Width*FlangeThickness+(Height-2*FlangeThickness)*WebThickness+(4-Math.PI)*RootRadius*RootRadius); }
     }
 
     // Centerline polyline with a radius at each intermediate vertex (0 is allowed only for straight continuation).

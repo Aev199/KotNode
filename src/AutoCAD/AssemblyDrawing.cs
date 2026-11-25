@@ -245,7 +245,26 @@ namespace KotNode.AutoCAD
                 new KotNode.Core.Point2(b,h-t),new KotNode.Core.Point2(b,h),new KotNode.Core.Point2(-b,h),
                 new KotNode.Core.Point2(-b,h-t),new KotNode.Core.Point2(-w,h-t),new KotNode.Core.Point2(-w,-h+t),
                 new KotNode.Core.Point2(-b,-h+t)};
-            return Extrude(Ring(points),p.Length);
+            if(p.RootRadius==0)return Extrude(Ring(points),p.Length);
+            var contour=new Polyline();
+            double r=p.RootRadius;
+            int index=0;
+            for(int i=0;i<points.Length;i++)
+            {
+                var q=points[i];
+                if(i!=3&&i!=4&&i!=9&&i!=10)
+                {
+                    contour.AddVertexAt(index++,new Point2d(q.X,q.Y),0,0,0);continue;
+                }
+                var prev=points[(i+points.Length-1)%points.Length];
+                var next=points[(i+1)%points.Length];
+                var incoming=new Vector2d(q.X-prev.X,q.Y-prev.Y).GetNormal();
+                var outgoing=new Vector2d(next.X-q.X,next.Y-q.Y).GetNormal();
+                contour.AddVertexAt(index++,new Point2d(q.X-r*incoming.X,q.Y-r*incoming.Y),-Math.Tan(Math.PI/8),0,0);
+                contour.AddVertexAt(index++,new Point2d(q.X+r*outgoing.X,q.Y+r*outgoing.Y),0,0,0);
+            }
+            contour.Closed=true;
+            return Extrude(contour,p.Length);
         }
         static Solid3d Solid(PartDefinition part)
         {

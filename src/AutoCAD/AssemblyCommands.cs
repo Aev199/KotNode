@@ -105,10 +105,16 @@ namespace KotNode.AutoCAD
                 else if(part.Kind==PartKind.IBeam)
                 {
                     var b=part.IBeam;
-                    f.TextField("Обозначение профиля","profile",b.Profile);
-                    f.Number("Высота, мм","h",b.Height);f.Number("Ширина, мм","w",b.Width);
-                    f.Number("Толщина стенки, мм","s",b.WebThickness);f.Number("Толщина полки, мм","t",b.FlangeThickness);
-                    f.Number("Длина, мм","l",b.Length);f.Number("Площадь сортамента, мм² (0 — расчёт)","area",b.CatalogAreaMm2??0);
+                    var choices=BeamCatalog.Profiles().ToDictionary(x=>x,x=>x+" — "+BeamCatalog.Standard);
+                    string selected=choices.ContainsKey(b.Profile)?b.Profile:"30Б2";
+                    // Old manually defined profiles require an explicit catalog choice on edit.
+                    if(!choices.ContainsKey(b.Profile))
+                    {
+                        choices.Add("","Выберите профиль (старые размеры не являются сортаментом)");
+                        selected="";
+                    }
+                    f.Choice("Профиль (выборка ГОСТ)","profile",choices,selected);
+                    f.Number("Длина, мм","l",b.Length);
                 }
                 else if(part.Kind==PartKind.Rebar)
                 {
@@ -126,7 +132,7 @@ namespace KotNode.AutoCAD
                     else if(part.Kind==PartKind.CurvedPlate)
                     {var p=part.CurvedPlate;p.InnerRadius=f.Value("r");p.Thickness=f.Value("t");p.Length=f.Value("l");p.AngleRadians=f.Value("a")*Math.PI/180;}
                     else if(part.Kind==PartKind.IBeam)
-                    {var b=part.IBeam;b.Profile=f.Get("profile").Trim();b.Height=f.Value("h");b.Width=f.Value("w");b.WebThickness=f.Value("s");b.FlangeThickness=f.Value("t");b.Length=f.Value("l");double a=f.Value("area");b.CatalogAreaMm2=a==0?(double?)null:a;}
+                    {part.IBeam=BeamCatalog.Create(f.Get("profile"),f.Value("l"));}
                     else if(part.Kind==PartKind.Rebar)
                     {
                         part.Rebar.Diameter=f.Value("d");
@@ -282,7 +288,7 @@ namespace KotNode.AutoCAD
         public void Beam()=>Run("NABEAM",(doc,tr)=>{
             var m=Need(doc,tr);AssemblyDrawing.Synchronize(doc.Database,tr,m);
             var part=new PartDefinition {Name="Двутавр",Position=NextPosition(m),IncludeInSpec=false,Kind=PartKind.IBeam,
-                IBeam=new IBeamShape {Height=300,Width=150,WebThickness=8,FlangeThickness=12,Length=1000}};
+                IBeam=BeamCatalog.Create("30Б2",1000)};
             if(!EditForm(part))return;
             var at=At(doc,"Центр сечения двутавра (ось Z текущей ПСК): ");if(at==null)return;
             AddPrepared(doc,tr,m,part,at);

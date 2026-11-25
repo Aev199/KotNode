@@ -91,6 +91,22 @@ static class AssemblyModelTests
         Check(Json.Write(edited)==snapshot,"failed add and replacement atomic");
         edited.RemoveInstance(b.Id); edited.RemoveUnusedDefinition(detached.Id);
         Check(edited.Parts.Count==1 && edited.Instances.Count==1 && edited.Specification().Single().Count==1,"delete instance and unused definition");
+        var standardBeam=BeamCatalog.Create("40Ш2",2000);
+        Check(standardBeam.Height==390 && standardBeam.Width==300 && standardBeam.RootRadius==22 && standardBeam.CatalogAreaMm2==13595,"catalog profile dimensions");
+        var standardPart=new PartDefinition { Name="Двутавр",Kind=PartKind.IBeam,IBeam=standardBeam };
+        Check(Near(standardPart.UnitMassKg(),213.4),"catalog nominal linear mass");
+        Check(Json.Copy(standardPart).IBeam.RootRadius==22 && Near(Json.Copy(standardPart).UnitMassKg(),213.4),"catalog serialization");
+        foreach(var profile in BeamCatalog.Profiles())
+        {
+            var section=BeamCatalog.Create(profile,1000);
+            double nominal=2*section.Width*section.FlangeThickness+(section.Height-2*section.FlangeThickness)*section.WebThickness+(4-Math.PI)*section.RootRadius*section.RootRadius;
+            Check(Math.Abs(nominal-section.CatalogAreaMm2.Value)<1.0,"profile area matches rounded nominal geometry "+profile);
+        }
+        var deletion=new AssemblyMark();
+        var def=new PartDefinition{Name="Лист",Kind=PartKind.RectangularPlate,Plate=new RectangularPlateShape{Length=500,Width=200,Thickness=12},Position="1",IncludeInSpec=true};
+        var firstLive=deletion.AddPart(def,new RigidPlacement());var secondLive=deletion.CopyInstance(firstLive.Id);
+        Check(deletion.RemoveMissingInstances(new[]{secondLive.Id})==1 && deletion.Parts.Count==1 && deletion.Specification().Single().Count==1,"erase one of shared definition");
+        Check(deletion.RemoveMissingInstances(new Guid[0])==1 && deletion.Parts.Count==0 && deletion.Specification().Count==0,"erase last instance");
         ShapeTests();
         ProjectTests();
         Console.WriteLine(checks + " assembly checks passed");
