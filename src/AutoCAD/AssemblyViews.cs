@@ -16,7 +16,7 @@ namespace KotNode.AutoCAD
     public static class AssemblyViews
     {
         internal const string Key="KOTNODE_VIEW_1";
-        internal const int Revision=3;
+        internal const int Revision=4;
         internal const string VisibleLayer="NA_VISIBLE",HiddenLayer="NA_HIDDEN",CutLayer="NA_CUT",HatchLayer="NA_HATCH";
         static double PaperScale(ViewData d)=>d.AnnotationScale>0?d.AnnotationScale:20;
         static void Layers(Database db,Transaction tr)
@@ -41,7 +41,7 @@ namespace KotNode.AutoCAD
                 layers.Add(layer);tr.AddNewlyCreatedDBObject(layer,true);
             }
         }
-        internal static bool IsStale(ViewData data,string hash)=>data.GeneratorRevision!=Revision||data.SourceHash!=hash;
+        internal static bool IsStale(ViewData data,string hash)=>(!data.ManualSnapshot&&data.GeneratorRevision!=Revision)||data.SourceHash!=hash;
         public sealed class ViewData
         {
             public Guid Id { get; set; }=Guid.NewGuid();
@@ -52,6 +52,7 @@ namespace KotNode.AutoCAD
             // Zero is legacy default; use 20 as annotation/printing scale.
             public double AnnotationScale { get; set; }
             public bool NoHatch { get; set; }
+            public bool ManualSnapshot { get; set; }
             public int GeneratorRevision { get; set; }
             public RigidPlacement Frame { get; set; }
             public string SourceHash { get; set; }
@@ -239,6 +240,8 @@ namespace KotNode.AutoCAD
             var temporary=new List<Solid3d>();
             var edges=new List<ProjectionVisibility.Edge>();
             Section section=null;
+            var vertical=Matrix3d.Rotation(Math.PI/2,Vector3d.XAxis,Point3d.Origin);
+            var horizontal=vertical.Inverse();
             try
             {
                 foreach(var body in bodies)
@@ -247,6 +250,7 @@ namespace KotNode.AutoCAD
                     try
                     {
                         copy.SetDatabaseDefaults(db);copy.Layer="0";
+                        copy.TransformBy(vertical);
                         space.AppendEntity(copy);tr.AddNewlyCreatedDBObject(copy,true);
                         temporary.Add(copy);
                     }
@@ -255,13 +259,21 @@ namespace KotNode.AutoCAD
                 double minX=bodies.Min(b=>b.GeometricExtents.MinPoint.X);
                 double maxX=bodies.Max(b=>b.GeometricExtents.MaxPoint.X);
                 double minY=bodies.Min(b=>b.GeometricExtents.MinPoint.Y);
+                double maxY=bodies.Max(b=>b.GeometricExtents.MaxPoint.Y);
                 double maxZ=bodies.Max(b=>b.GeometricExtents.MaxPoint.Z);
-                double margin=Math.Max(1,(maxX-minX)*0.01);
+                double margin=Math.Max(1,Math.Max(maxX-minX,maxY-minY)*0.01);
                 double z=maxZ+margin;
-                var points=new Point3dCollection(new[]{new Point3d(minX-margin,minY-margin,z),new Point3d(maxX+margin,minY-margin,z)});
-                section=new Section(points,Vector3d.YAxis,Vector3d.ZAxis);
+                double middleY=(minY+maxY)/2;
+                // Work in the conventional XZ elevation plane. A horizontal
+                // section plane in world XY returned no entities in AutoCAD 2021.
+                // View-local (x,y,z) -> kernel (x,-z,y).
+                var points=new Point3dCollection(new[]{new Point3d(minX-margin,-z,middleY),new Point3d(maxX+margin,-z,middleY)});
+                section=new Section(points,Vector3d.ZAxis);
                 section.SetDatabaseDefaults(db);section.State=SectionState.Plane;
                 space.AppendEntity(section);tr.AddNewlyCreatedDBObject(section,true);
+                section.ViewingDirection=-Vector3d.YAxis;
+                section.SetHeight(SectionHeight.HeightAboveSectionLine,(maxY-minY)/2+margin);
+                section.SetHeight(SectionHeight.HeightBelowSectionLine,(maxY-minY)/2+margin);
                 var settings=(SectionSettings)tr.GetObject(section.Settings,OpenMode.ForWrite);
                 var type=SectionType.Section2d;
                 settings.CurrentSectionType=type;
@@ -270,8 +282,8 @@ namespace KotNode.AutoCAD
                 settings.SetVisibility(type,SectionGeometry.BackgroundGeometry,true);
                 settings.SetVisibility(type,SectionGeometry.ForegroundGeometry,true);
                 settings.SetVisibility(type,SectionGeometry.CurveTangencyLines,false);
-                var shift=Matrix3d.Displacement(new Vector3d(0,0,-z));
-                Diagnostics.Step("Проекция: тел "+temporary.Count+", плоскость Z="+z.ToString("G17")+", верх модели Z="+maxZ.ToString("G17"));
+                var shift=Matrix3d.Displacement(new Vector3d(0,0,-z))*horizontal;
+                Diagnostics.Step("Вертикальная проекция: тел "+temporary.Count+", Y плоскости="+(-z).ToString("G17")+", направление="+section.ViewingDirection+", высота="+(maxY-minY+2*margin).ToString("G17"));
                 for(int i=0;i<temporary.Count;i++)
                 {
                     for(int pass=0;pass<(data.Hidden?2:1);pass++)
@@ -287,19 +299,20 @@ namespace KotNode.AutoCAD
                             Diagnostics.Step("Тело "+(i+1)+"/"+temporary.Count+", скрытые="+hidden+
                                 ": boundary="+(cut?.Length??0)+", fill="+(fill?.Length??0)+", background="+(back?.Length??0)+", foreground="+(front?.Length??0)+", tangent="+(tangent?.Length??0));
                             if(pass==0&&projected.Count==0)
-                                throw new InvalidOperationException("Ядро AutoCAD не вернуло проекцию тела "+(i+1)+". Подробности в NPLOG.");
+                                throw new InvalidOperationException("Ядро AutoCAD не вернуло проекцию тела "+(i+1)+". Подробности в NPLOG. Резерв: FLATSHOT и NAIMPORTVIEW.");
                             foreach(var e in projected)
                             {
                                 var ext=e.GeometricExtents;
-                                bool atZero=Math.Abs(ext.MinPoint.Z)<1e-5&&Math.Abs(ext.MaxPoint.Z)<1e-5;
-                                edges.Add(new ProjectionVisibility.Edge(i,Flatten(e,atZero?Matrix3d.Identity:shift),hidden));
+                                bool onPlane=Math.Abs(ext.MinPoint.Y+z)<1e-5&&Math.Abs(ext.MaxPoint.Y+z)<1e-5;
+                                if(!onPlane)throw new InvalidOperationException("Ядро вернуло кривую вне плоскости проекции: "+e.GetType().Name+", Y="+ext.MinPoint.Y+".."+ext.MaxPoint.Y);
+                                edges.Add(new ProjectionVisibility.Edge(i,Flatten(e,shift),hidden));
                             }
                         }
                         finally {foreach(var e in all)e.Dispose();}
                     }
                 }
                 Diagnostics.Step("Взаимная видимость: кривых "+edges.Count);
-                ProjectionVisibility.Write(block,tr,db,temporary,edges,data.Hidden,PaperScale(data));
+                ProjectionVisibility.Write(block,tr,db,bodies,edges,data.Hidden,PaperScale(data));
             }
             finally
             {
@@ -340,11 +353,43 @@ namespace KotNode.AutoCAD
             space.AppendEntity(reference);tr.AddNewlyCreatedDBObject(reference,true);
             Save(reference,tr,data);
         }
+        // Adopt an explicitly selected native 2D block as a manual snapshot.
+        // No claim is made about its source or geometric accuracy: user verifies it.
+        internal static void AttachSnapshot(Database db,Transaction tr,AssemblyMark mark,BlockReference reference,ViewData data)
+        {
+            if(reference.OwnerId!=AssemblyDrawing.ModelSpace(db,tr).ObjectId)
+                throw new InvalidOperationException("Выберите блок в пространстве модели.");
+            if(!reference.ExtensionDictionary.IsNull)
+            {
+                var dict=(DBDictionary)tr.GetObject(reference.ExtensionDictionary,OpenMode.ForRead);
+                if(dict.Contains(Key)||dict.Contains("KOTNODE_INSTANCE_1"))
+                    throw new InvalidOperationException("Объект уже управляется конструктором.");
+            }
+            if(AssemblyDrawing.AuxiliaryGroups(db,tr,mark).Any(g=>g.Item2.Contains(reference.ObjectId)))
+                throw new InvalidOperationException("Блок уже включён во вспомогательную графику.");
+            var placement=AssemblyDrawing.Placement(reference);
+            if(Math.Abs(placement.Origin.Z)>1e-5||Math.Abs(placement.AxisX.Z)>1e-8||Math.Abs(placement.AxisY.Z)>1e-8)
+                throw new InvalidOperationException("Блок FLATSHOT должен быть в мировой XY, Z=0, масштаб 1:1.");
+            var def=(BlockTableRecord)tr.GetObject(reference.BlockTableRecord,OpenMode.ForRead);
+            int count=0;
+            foreach(ObjectId id in def)
+            {
+                var entity=tr.GetObject(id,OpenMode.ForRead) as Curve;
+                if(entity==null)throw new InvalidOperationException("Допускается только блок плоских кривых FLATSHOT, без вложенных блоков.");
+                var ext=entity.GeometricExtents;
+                if(Math.Abs(ext.MinPoint.Z)>1e-5||Math.Abs(ext.MaxPoint.Z)>1e-5)
+                    throw new InvalidOperationException("Блок содержит неплоскую геометрию.");
+                count++;
+            }
+            if(count==0)throw new InvalidOperationException("Пустой блок.");
+            data.MarkId=mark.Id;data.ManualSnapshot=true;data.SourceHash=Signature(mark);data.GeneratorRevision=Revision;
+            Save(reference,tr,data);
+        }
         internal static void Rebuild(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs,Entry entry)
         {
             var geometry=Build(db,tr,refs,entry.Data);
             AssemblyDrawing.Replace(entry.Reference,geometry);
-            entry.Data.SourceHash=Signature(mark);entry.Data.GeneratorRevision=Revision;
+            entry.Data.SourceHash=Signature(mark);entry.Data.GeneratorRevision=Revision;entry.Data.ManualSnapshot=false;
             Save(entry.Reference,tr,entry.Data);
         }
         internal static int Update(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs,Guid? only=null)
