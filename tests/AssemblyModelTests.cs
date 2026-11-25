@@ -91,6 +91,60 @@ static class AssemblyModelTests
         Check(Json.Write(edited)==snapshot,"failed add and replacement atomic");
         edited.RemoveInstance(b.Id); edited.RemoveUnusedDefinition(detached.Id);
         Check(edited.Parts.Count==1 && edited.Instances.Count==1 && edited.Specification().Single().Count==1,"delete instance and unused definition");
+        ShapeTests();
         Console.WriteLine(checks + " assembly checks passed");
+    }
+
+    static System.Collections.Generic.List<Point2> Ring(params double[] coordinates)
+    {
+        var points=new System.Collections.Generic.List<Point2>();
+        for(int i=0;i<coordinates.Length;i+=2) points.Add(new Point2(coordinates[i],coordinates[i+1]));
+        return points;
+    }
+    static void ShapeTests()
+    {
+        var polygon=new PolygonPlateShape { Thickness=12, Outer=Ring(0,0,200,0,200,100,100,100,100,200,0,200) };
+        polygon.Holes.Add(Ring(20,20,40,20,40,40,20,40));
+        polygon.RoundHoles.Add(new RoundHole { Center=new Point2(150,50),Radius=10 });
+        double area=30000-400-Math.PI*100;
+        Check(Near(polygon.NetAreaMm2(),area),"concave plate with polygon and round holes");
+        polygon.Outer.Reverse(); polygon.Holes[0].Reverse();
+        Check(Near(polygon.NetAreaMm2(),area),"ring winding independent");
+        var part=new PartDefinition { Kind=PartKind.PolygonPlate,Name="Лист",Position="1",IncludeInSpec=true,PolygonPlate=polygon };
+        Check(Near(part.UnitMassKg(),area*12*7850/1e9),"net plate mass");
+        var copy=Json.Copy(part);
+        Check(Near(copy.UnitMassKg(),part.UnitMassKg()),"polygon JSON roundtrip");
+        var invalid=Json.Copy(polygon); invalid.Outer=Ring(0,0,100,100,0,100,100,0); Reject(invalid.Validate,"self intersecting outer");
+        invalid=Json.Copy(polygon); invalid.Outer=Ring(0,0,100,0,50,0,100,100,0,100); Reject(invalid.Validate,"adjacent backtracking rejected");
+        invalid=Json.Copy(polygon); invalid.Holes[0]=Ring(90,90,110,90,110,110,90,110); Reject(invalid.Validate,"hole crosses concave boundary");
+        invalid=Json.Copy(polygon); invalid.Holes.Add(Ring(25,25,35,25,35,35,25,35)); Reject(invalid.Validate,"nested holes rejected");
+        invalid=Json.Copy(polygon); invalid.RoundHoles[0].Center=new Point2(190,50); Reject(invalid.Validate,"round hole tangent to edge rejected");
+        invalid=Json.Copy(polygon); invalid.RoundHoles[0].Center=new Point2(30,30); Reject(invalid.Validate,"round hole overlaps polygon hole");
+        invalid=Json.Copy(polygon); invalid.RoundHoles.Add(new RoundHole { Center=new Point2(170,50),Radius=10 }); Reject(invalid.Validate,"round holes tangent rejected");
+        invalid=Json.Copy(polygon); invalid.RoundHoles[0].Center=new Point2(150,150); Reject(invalid.Validate,"round hole outside concave plate rejected");
+        invalid=Json.Copy(polygon); invalid.Outer.Add(invalid.Outer[0]); Reject(invalid.Validate,"explicit duplicate closure rejected");
+        var beam=new PartDefinition { Kind=PartKind.IBeam,Name="Двутавр",Position="2",IncludeInSpec=true,
+            IBeam=new IBeamShape { Profile="Test",Height=300,Width=150,WebThickness=8,FlangeThickness=12,Length=1000 }};
+        Check(Near(beam.IBeam.AreaMm2(),5808),"idealized I section area");
+        Check(Near(beam.UnitMassKg(),45.5928),"I section mass");
+        beam.IBeam.CatalogAreaMm2=6000;
+        Check(Near(beam.UnitMassKg(),47.1),"catalog area mass");
+        var beamBad=Json.Copy(beam); beamBad.IBeam.FlangeThickness=150; Reject(beamBad.Validate,"invalid flange");
+        beamBad=Json.Copy(beam); beamBad.IBeam.CatalogAreaMm2=50000; Reject(beamBad.Validate,"catalog area outside envelope");
+        var bar=new PartDefinition { Kind=PartKind.Rebar,Name="Стержень",Material="А500С",Position="3",IncludeInSpec=true,
+            Rebar=new RebarShape { Diameter=16 }};
+        bar.Rebar.Points.Add(new Vector3(0,0,0)); bar.Rebar.Points.Add(new Vector3(100,0,0)); bar.Rebar.Points.Add(new Vector3(100,0,100));
+        bar.Rebar.BendRadii.Add(20);
+        double length=160+10*Math.PI;
+        Check(Near(bar.Rebar.CenterlineLengthMm(),length),"spatial right angle bend length");
+        Check(Near(bar.UnitMassKg(),Math.PI*64*length*7850/1e9),"rebar mass");
+        var badBar=Json.Copy(bar); badBar.Rebar.BendRadii[0]=110; Reject(badBar.Validate,"oversized bend rejected");
+        badBar=Json.Copy(bar); badBar.Rebar.BendRadii[0]=8; Reject(badBar.Validate,"bend below bar radius rejected");
+        badBar=Json.Copy(bar); badBar.Rebar.Points[2]=new Vector3(0,0,0); Reject(badBar.Validate,"180 reversal rejected");
+        badBar=Json.Copy(bar); badBar.Rebar.Points.Add(new Vector3(200,0,100)); badBar.Rebar.BendRadii[0]=60; badBar.Rebar.BendRadii.Add(60); Reject(badBar.Validate,"adjacent bend overlap rejected");
+        var mark=new AssemblyMark();
+        mark.AddPart(part,new RigidPlacement()); mark.AddPart(beam,new RigidPlacement()); mark.AddPart(bar,new RigidPlacement());
+        Check(Json.Copy(mark).Specification().Count==3 && Near(Json.Copy(mark).Specification().Sum(r=>r.TotalMassKg),mark.Specification().Sum(r=>r.TotalMassKg)),"all new shapes survive assembly roundtrip");
+        var ambiguous=Json.Copy(part); ambiguous.IBeam=beam.IBeam; Reject(ambiguous.Validate,"ambiguous new shape rejected");
     }
 }
