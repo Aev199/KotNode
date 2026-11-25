@@ -105,6 +105,12 @@ namespace KotNode.AutoCAD
                     f.Number("Толщина стенки, мм","s",b.WebThickness);f.Number("Толщина полки, мм","t",b.FlangeThickness);
                     f.Number("Длина, мм","l",b.Length);f.Number("Площадь сортамента, мм² (0 — расчёт)","area",b.CatalogAreaMm2??0);
                 }
+                else if(part.Kind==PartKind.Rebar)
+                {
+                    f.Number("Диаметр, мм","d",part.Rebar.Diameter);
+                    for(int i=0;i<part.Rebar.BendRadii.Count;i++)
+                        f.Number("Радиус по оси гиба "+(i+1)+", мм","bend"+i,part.Rebar.BendRadii[i]);
+                }
                 else throw new NotSupportedException("Этот тип детали пока не редактируется в AutoCAD.");
                 f.ValidateFields=()=>{
                     part.Name=f.Get("name").Trim();part.Position=f.Get("position").Trim();
@@ -116,6 +122,11 @@ namespace KotNode.AutoCAD
                     {var p=part.CurvedPlate;p.InnerRadius=f.Value("r");p.Thickness=f.Value("t");p.Length=f.Value("l");p.AngleRadians=f.Value("a")*Math.PI/180;}
                     else if(part.Kind==PartKind.IBeam)
                     {var b=part.IBeam;b.Profile=f.Get("profile").Trim();b.Height=f.Value("h");b.Width=f.Value("w");b.WebThickness=f.Value("s");b.FlangeThickness=f.Value("t");b.Length=f.Value("l");double a=f.Value("area");b.CatalogAreaMm2=a==0?(double?)null:a;}
+                    else if(part.Kind==PartKind.Rebar)
+                    {
+                        part.Rebar.Diameter=f.Value("d");
+                        for(int i=0;i<part.Rebar.BendRadii.Count;i++)part.Rebar.BendRadii[i]=f.Value("bend"+i);
+                    }
                     part.Validate();
                 };
                 return AcApp.ShowModalDialog(f)==DialogResult.OK;
@@ -223,6 +234,33 @@ namespace KotNode.AutoCAD
             var at=At(doc,"Центр сечения двутавра (ось Z текущей ПСК): ");if(at==null)return;
             AddPrepared(doc,tr,m,part,at);
         });
+        [CommandMethod("NAREBAR",CommandFlags.Modal)]
+        public void Rebar()=>Run("NAREBAR",(doc,tr)=>{
+            var m=Need(doc,tr);AssemblyDrawing.Synchronize(doc.Database,tr,m);
+            var ed=doc.Editor;var ucs=ed.CurrentUserCoordinateSystem;
+            var first=ed.GetPoint("\nНачало оси стержня: ");if(first.Status!=PromptStatus.OK)return;
+            var origin=first.Value.TransformBy(ucs);
+            var x=Vector3d.XAxis.TransformBy(ucs);var y=Vector3d.YAxis.TransformBy(ucs);var z=x.CrossProduct(y);
+            var toLocal=Matrix3d.AlignCoordinateSystem(origin,x,y,z,Point3d.Origin,Vector3d.XAxis,Vector3d.YAxis,Vector3d.ZAxis);
+            var shape=new RebarShape {Diameter=16};shape.Points.Add(new Vector3(0,0,0));
+            var previous=first.Value;
+            while(shape.Points.Count<32)
+            {
+                var options=new PromptPointOptions("\nСледующая точка оси (Enter — завершить): ") {AllowNone=true,UseBasePoint=true,BasePoint=previous};
+                var next=ed.GetPoint(options);
+                if(next.Status==PromptStatus.None)break;
+                if(next.Status!=PromptStatus.OK)return;
+                var p=next.Value.TransformBy(ucs).TransformBy(toLocal);
+                shape.Points.Add(new Vector3(p.X,p.Y,p.Z));previous=next.Value;
+            }
+            if(shape.Points.Count<2)throw new InvalidOperationException("Укажите не менее двух точек стержня.");
+            if(shape.Points.Count==32)ed.WriteMessage("\nДостигнут предел прототипа: 32 точки.");
+            for(int i=1;i<shape.Points.Count-1;i++)shape.BendRadii.Add(64);
+            var part=new PartDefinition {Name="Арматурный стержень",Material="А500С",Position=NextPosition(m),IncludeInSpec=true,Kind=PartKind.Rebar,Rebar=shape};
+            if(!EditForm(part))return;
+            var at=new RigidPlacement {Origin=new Vector3(origin.X,origin.Y,origin.Z),AxisX=new Vector3(x.X,x.Y,x.Z),AxisY=new Vector3(y.X,y.Y,y.Z)};
+            AddPrepared(doc,tr,m,part,at);
+        });
         [CommandMethod("NACONSTRUCTOR",CommandFlags.Modal)]
         public void Open()
         {
@@ -230,7 +268,7 @@ namespace KotNode.AutoCAD
             {
                 var panel=new FlowLayoutPanel {Dock=DockStyle.Fill,AutoScroll=true,FlowDirection=System.Windows.Forms.FlowDirection.TopDown,WrapContents=false,Padding=new Padding(8)};
                 panel.Controls.Add(new Label {Text="Экспериментальный конструктор\nОдна марка на DWG • модель 1:1",AutoSize=true});
-                foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Добавить трубу","NAPIPE"},new[]{"Добавить лист","NAPLATE"},new[]{"Лист по контуру","NAPOLYPLATE"},new[]{"Криволинейный лист","NACURVED"},new[]{"Двутавр","NABEAM"},new[]{"Свойства детали","NAEDIT"},new[]{"Копировать экземпляр","NACOPY"},new[]{"Отделить позицию","NADETACH"},new[]{"Удалить экземпляр","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"},new[]{"Восстановить удалённое","NAREPAIR"}})
+                foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Добавить трубу","NAPIPE"},new[]{"Добавить лист","NAPLATE"},new[]{"Лист по контуру","NAPOLYPLATE"},new[]{"Криволинейный лист","NACURVED"},new[]{"Двутавр","NABEAM"},new[]{"Арматурный стержень","NAREBAR"},new[]{"Свойства детали","NAEDIT"},new[]{"Копировать экземпляр","NACOPY"},new[]{"Отделить позицию","NADETACH"},new[]{"Удалить экземпляр","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"},new[]{"Восстановить удалённое","NAREPAIR"}})
                 {
                     var cmd=pair[1];
                     var button=new Button {Text=pair[0],Width=210,Height=32};

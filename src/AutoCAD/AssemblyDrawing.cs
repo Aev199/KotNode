@@ -246,19 +246,75 @@ namespace KotNode.AutoCAD
             if(part.Kind==PartKind.IBeam)return Beam(part.IBeam);
             throw new NotSupportedException("Этот тип детали пока не строится в AutoCAD.");
         }
+        static Matrix3d Frame(Point3d origin,Vector3d x,Vector3d y,Vector3d z)
+            =>Matrix3d.AlignCoordinateSystem(Point3d.Origin,Vector3d.XAxis,Vector3d.YAxis,Vector3d.ZAxis,origin,x,y,z);
+
+        // Separate tangent ACIS bodies inside one managed definition. Avoid fragile
+        // Boolean unions at tangential faces; quantities still count one bar.
+        static List<Solid3d> BarBodies(RebarShape bar)
+        {
+            bar.Validate();
+            var points=bar.Points.Select(P).ToArray();
+            int n=points.Length;
+            var dirs=new Vector3d[n-1];
+            var trim=new double[n];var angles=new double[n];
+            for(int i=0;i<n-1;i++)dirs[i]=(points[i+1]-points[i]).GetNormal();
+            for(int i=1;i<n-1;i++)
+            {
+                angles[i]=Math.Acos(Math.Max(-1,Math.Min(1,dirs[i-1].DotProduct(dirs[i]))));
+                if(angles[i]>1e-8)trim[i]=bar.BendRadii[i-1]*Math.Tan(angles[i]/2);
+            }
+            var bodies=new List<Solid3d>();
+            try
+            {
+                for(int i=0;i<n-1;i++)
+                {
+                    var a=points[i]+dirs[i]*trim[i];
+                    double length=(points[i+1]-points[i]).Length-trim[i]-trim[i+1];
+                    if(length>1e-7)
+                    {
+                        var z=dirs[i];var x=z.GetPerpendicularVector().GetNormal();var y=z.CrossProduct(x);
+                        var body=CircleSolid(bar.Diameter/2,length);bodies.Add(body);
+                        body.TransformBy(Frame(a,x,y,z));
+                    }
+                    int j=i+1;
+                    if(j>=n-1 || angles[j]<=1e-8)continue;
+                    double r=bar.BendRadii[j-1],angle=angles[j];
+                    var tangent=dirs[i];var normal=tangent.CrossProduct(dirs[j]).GetNormal();
+                    var radial=tangent.CrossProduct(normal).GetNormal();
+                    var start=points[j]-tangent*trim[j];
+                    var center=start-radial*r;
+                    // Construct circular sweep in a simple local XY frame.
+                    using(var path=new Arc(Point3d.Origin,r,0,angle))
+                    using(var profile=new Circle(new Point3d(r,0,0),Vector3d.YAxis,bar.Diameter/2))
+                    {
+                        var body=new Solid3d();bodies.Add(body);
+                        body.CreateSweptSolid(profile,path,new SweepOptions());
+                        body.TransformBy(Frame(center,radial,tangent,normal));
+                    }
+                }
+                if(bodies.Count==0)throw new InvalidOperationException("Не удалось построить тело стержня.");
+                return bodies;
+            }
+            catch {foreach(var body in bodies)body.Dispose();throw;}
+        }
         internal static ObjectId Geometry(Database db,Transaction tr,PartDefinition part)
         {
-            using(var solid=Solid(part))
+            var solids=part.Kind==PartKind.Rebar?BarBodies(part.Rebar):new List<Solid3d>{Solid(part)};
+            try
             {
                 var bt=(BlockTable)tr.GetObject(db.BlockTableId,OpenMode.ForWrite);
                 var block=new BlockTableRecord { Name="NA_"+Guid.NewGuid().ToString("N"),Units=UnitsValue.Millimeters };
                 var id=bt.Add(block);tr.AddNewlyCreatedDBObject(block,true);
-                // Clone into the database; the transient solid can then be disposed.
-                var body=(Solid3d)solid.Clone();
-                body.SetDatabaseDefaults(db);body.Layer="0";
-                block.AppendEntity(body);tr.AddNewlyCreatedDBObject(body,true);
+                foreach(var solid in solids)
+                {
+                    var body=(Solid3d)solid.Clone();
+                    body.SetDatabaseDefaults(db);body.Layer="0";
+                    block.AppendEntity(body);tr.AddNewlyCreatedDBObject(body,true);
+                }
                 return id;
             }
+            finally {foreach(var solid in solids)solid.Dispose();}
         }
         internal static BlockReference Insert(Database db,Transaction tr,AssemblyMark mark,PartInstance instance,ObjectId geometry)
         {
