@@ -60,6 +60,37 @@ static class AssemblyModelTests
         copy = Json.Copy(mark); copy.Parts[0].Pipe = new PipeShape(); Reject(copy.Validate,"ambiguous shape rejected");
         copy = Json.Copy(mark); copy.Parts[0].Kind = (PartKind)99; Reject(copy.Validate,"unknown shape rejected");
         copy = Json.Copy(mark); copy.Schema = 2; Reject(copy.Validate,"unknown model schema rejected");
+        var edited = new AssemblyMark();
+        var definition = new PartDefinition { Name = "Лист", Position = "1", IncludeInSpec = true,
+            Kind = PartKind.RectangularPlate, Plate = new RectangularPlateShape { Length = 500, Width = 200, Thickness = 12 } };
+        var placement = new RigidPlacement();
+        var a = edited.AddPart(definition, placement);
+        definition.Plate.Thickness = 99; placement.Origin.X = 999;
+        Check(Near(edited.Specification().Single().UnitMassKg,9.42) && a.Placement.Origin.X == 0, "add copies inputs");
+        var b = edited.CopyInstance(a.Id);
+        var next = new RigidPlacement { Origin = new Vector3(100,200,300) };
+        edited.SetPlacement(b.Id,next); next.Origin.X = 999;
+        Check(b.Placement.Origin.X == 100 && a.Placement.Origin.X == 0,"move affects one instance and copies input");
+        var snapshot = Json.Write(edited);
+        Reject(()=>edited.SetPlacement(b.Id,new RigidPlacement { AxisX = new Vector3(2,0,0) }),"invalid move rejected");
+        Reject(()=>edited.DetachInstance(b.Id," 1 "),"detach duplicate position rejected");
+        Reject(()=>edited.RemoveUnusedDefinition(a.PartId),"used definition cannot be removed");
+        Reject(()=>edited.RemoveInstance(Guid.NewGuid()),"missing instance rejected");
+        Check(Json.Write(edited) == snapshot,"rejected edits preserve state");
+        var detached = edited.DetachInstance(b.Id,"2");
+        Check(a.Id != b.Id && b.PartId == detached.Id && a.PartId != b.PartId && edited.Specification().Count == 2,"detach keeps instance identity");
+        var replacement = Json.Copy(detached); replacement.Plate.Thickness = 20;
+        edited.ReplaceDefinition(detached.Id,replacement);
+        Check(Near(edited.Specification().Single(r=>r.Position=="1").UnitMassKg,9.42) && Near(edited.Specification().Single(r=>r.Position=="2").UnitMassKg,15.7),"independent definition edit");
+        replacement.Plate.Thickness = 99;
+        Check(Near(edited.Specification().Single(r=>r.Position=="2").UnitMassKg,15.7),"replacement copied");
+        snapshot = Json.Write(edited);
+        replacement = Json.Copy(edited.Parts.Single(p=>p.Id==detached.Id)); replacement.Position = "1";
+        Reject(()=>edited.ReplaceDefinition(detached.Id,replacement),"replacement duplicate position rejected");
+        Reject(()=>edited.AddPart(Json.Copy(edited.Parts[0]),new RigidPlacement()),"duplicate definition rejected");
+        Check(Json.Write(edited)==snapshot,"failed add and replacement atomic");
+        edited.RemoveInstance(b.Id); edited.RemoveUnusedDefinition(detached.Id);
+        Check(edited.Parts.Count==1 && edited.Instances.Count==1 && edited.Specification().Single().Count==1,"delete instance and unused definition");
         Console.WriteLine(checks + " assembly checks passed");
     }
 }
