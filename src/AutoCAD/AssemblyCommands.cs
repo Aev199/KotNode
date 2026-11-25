@@ -229,7 +229,7 @@ namespace KotNode.AutoCAD
         {
             return points.Select(point=>{
                 var p=point.TransformBy(toLocal);
-                if(Math.Abs(p.Z)>1e-6)throw new InvalidOperationException("Контуры и отверстия должны лежать в одной плоскости, параллельной XY текущей ПСК.");
+                if(Math.Abs(p.Z)>1e-6)throw new InvalidOperationException("Контур и отверстия должны лежать в одной плоскости.");
                 return new KotNode.Core.Point2(p.X,p.Y);
             }).ToList();
         }
@@ -241,9 +241,17 @@ namespace KotNode.AutoCAD
             if(picked.Status!=PromptStatus.OK)return;
             var outerIds=picked.Value.GetObjectIds();
             var outer=ReadOuter(outerIds,tr);
-            var ucs=ed.CurrentUserCoordinateSystem;
-            var origin=outer[0];
-            var x=Vector3d.XAxis.TransformBy(ucs);var y=Vector3d.YAxis.TransformBy(ucs);var z=x.CrossProduct(y);
+            var preferred=Vector3d.ZAxis.TransformBy(ed.CurrentUserCoordinateSystem);
+            if(outerIds.Length==1)
+            {
+                var entity=tr.GetObject(outerIds[0],OpenMode.ForRead);
+                if(entity is Polyline poly)preferred=poly.Normal;
+                else if(entity is Polyline2d old)preferred=old.Normal;
+            }
+            var at=ContourPlane.Fit(outer.Select(v=>new Vector3(v.X,v.Y,v.Z)).ToList(),new Vector3(preferred.X,preferred.Y,preferred.Z));
+            var origin=new Point3d(at.Origin.X,at.Origin.Y,at.Origin.Z);
+            var x=new Vector3d(at.AxisX.X,at.AxisX.Y,at.AxisX.Z);
+            var y=new Vector3d(at.AxisY.X,at.AxisY.Y,at.AxisY.Z);var z=x.CrossProduct(y);
             var toLocal=Matrix3d.AlignCoordinateSystem(origin,x,y,z,Point3d.Origin,Vector3d.XAxis,Vector3d.YAxis,Vector3d.ZAxis);
             var p=new PolygonPlateShape {Thickness=12,Outer=ReadRing(outer,toLocal)};
             var option=new PromptKeywordOptions("\nЕсть отверстия? [Yes/No] <No>: ");
@@ -271,7 +279,6 @@ namespace KotNode.AutoCAD
             }
             var part=new PartDefinition {Name="Лист",Position=NextPosition(m),IncludeInSpec=true,Kind=PartKind.PolygonPlate,PolygonPlate=p};
             if(!EditForm(part))return;
-            var at=new RigidPlacement {Origin=new Vector3(origin.X,origin.Y,origin.Z),AxisX=new Vector3(x.X,x.Y,x.Z),AxisY=new Vector3(y.X,y.Y,y.Z)};
             AddPrepared(doc,tr,m,part,at);
             ed.WriteMessage("\nЛист создан. Исходные контуры оставлены без изменений.");
         });
@@ -452,7 +459,7 @@ namespace KotNode.AutoCAD
                 tree=new System.Windows.Forms.TreeView {Dock=DockStyle.Fill,HideSelection=false,ShowNodeToolTips=true};layout.Controls.Add(tree,0,1);
                 treeStatus=new Label {AutoSize=true,MaximumSize=new Size(300,0)};layout.Controls.Add(treeStatus,0,2);
                 var panel=new FlowLayoutPanel {Dock=DockStyle.Fill,AutoSize=true,FlowDirection=System.Windows.Forms.FlowDirection.LeftToRight,WrapContents=true,Padding=new Padding(1)};
-                foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Труба","NAPIPE"},new[]{"Лист","NAPLATE"},new[]{"Лист по контуру","NAPOLYPLATE"},new[]{"Кривой лист","NACURVED"},new[]{"Двутавр","NABEAM"},new[]{"Арматура","NAREBAR"},new[]{"Вспом. чертёж","NAAUX"},new[]{"Свойства","NAEDIT"},new[]{"Копировать","NACOPY"},new[]{"Отделить","NADETACH"},new[]{"Удалить","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"},new[]{"Восстановить","NAREPAIR"},new[]{"Обновить дерево","NAREFRESH"}})
+                foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Труба","NAPIPE"},new[]{"Лист","NAPLATE"},new[]{"Лист по контуру","NAPOLYPLATE"},new[]{"Кривой лист","NACURVED"},new[]{"Двутавр","NABEAM"},new[]{"Арматура","NAREBAR"},new[]{"Вспом. чертёж","NAAUX"},new[]{"Свойства","NAEDIT"},new[]{"Копировать","NACOPY"},new[]{"Линейный массив","NAARRAY"},new[]{"Отделить","NADETACH"},new[]{"Удалить","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"},new[]{"Восстановить","NAREPAIR"},new[]{"Обновить дерево","NAREFRESH"}})
                 {
                     var cmd=pair[1];var button=new Button {Text=pair[0],AutoSize=true};
                     button.Click+=(s,e)=>Queue(cmd);panel.Controls.Add(button);
@@ -513,11 +520,40 @@ namespace KotNode.AutoCAD
         public void Copy()=>Run("NACOPY",(doc,tr)=>{
             var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
             var id=Select(doc,refs);if(!id.HasValue)return;
-            var at=At(doc,"Новое положение начала детали: ");if(at==null)return;
-            var copy=m.CopyInstance(id.Value);
-            copy.Placement.Origin=at.Origin; // preserve orientation of the source
-            AssemblyDrawing.Insert(doc.Database,tr,m,copy,refs[id.Value].BlockTableRecord);
+            var ed=doc.Editor;
+            var ucs=ed.CurrentUserCoordinateSystem;
+            var origins=new List<Vector3>();
+            while(origins.Count<500)
+            {
+                var option=new PromptPointOptions("\nНовое положение начала детали (Enter — завершить, Esc — отменить): ") {AllowNone=true};
+                var point=ed.GetPoint(option);
+                if(point.Status==PromptStatus.None)break;
+                if(point.Status!=PromptStatus.OK)return;
+                var w=point.Value.TransformBy(ucs);
+                origins.Add(new Vector3(w.X,w.Y,w.Z));
+            }
+            if(origins.Count==0)return;
+            var copies=m.CopyInstances(id.Value,origins);
+            foreach(var copy in copies)AssemblyDrawing.Insert(doc.Database,tr,m,copy,refs[id.Value].BlockTableRecord);
             AssemblyDrawing.Save(doc.Database,tr,m);
+            ed.WriteMessage("\nСоздано дополнительных экземпляров: "+copies.Count);
+        });
+        [CommandMethod("NAARRAY",CommandFlags.Modal)]
+        public void LinearArray()=>Run("NAARRAY",(doc,tr)=>{
+            var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
+            var id=Select(doc,refs);if(!id.HasValue)return;
+            var ed=doc.Editor;
+            var count=ed.GetInteger(new PromptIntegerOptions("\nКоличество дополнительных копий (без исходной детали): ") {LowerLimit=1,UpperLimit=500,AllowZero=false,AllowNegative=false});
+            if(count.Status!=PromptStatus.OK)return;
+            var ucs=ed.CurrentUserCoordinateSystem;
+            var a=ed.GetPoint("\nПервая точка вектора шага: ");if(a.Status!=PromptStatus.OK)return;
+            var b=ed.GetPoint(new PromptPointOptions("\nВторая точка вектора шага: ") {UseBasePoint=true,BasePoint=a.Value});
+            if(b.Status!=PromptStatus.OK)return;
+            var step=b.Value.TransformBy(ucs)-a.Value.TransformBy(ucs);
+            var copies=m.LinearCopies(id.Value,new Vector3(step.X,step.Y,step.Z),count.Value);
+            foreach(var copy in copies)AssemblyDrawing.Insert(doc.Database,tr,m,copy,refs[id.Value].BlockTableRecord);
+            AssemblyDrawing.Save(doc.Database,tr,m);
+            ed.WriteMessage("\nСоздано дополнительных экземпляров: "+copies.Count);
         });
         [CommandMethod("NADETACH",CommandFlags.Modal)]
         public void Detach()=>Run("NADETACH",(doc,tr)=>{

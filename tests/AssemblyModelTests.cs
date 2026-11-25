@@ -108,6 +108,34 @@ static class AssemblyModelTests
         var firstLive=deletion.AddPart(def,new RigidPlacement());var secondLive=deletion.CopyInstance(firstLive.Id);
         Check(deletion.RemoveMissingInstances(new[]{secondLive.Id})==1 && deletion.Parts.Count==1 && deletion.Specification().Single().Count==1,"erase one of shared definition");
         Check(deletion.RemoveMissingInstances(new Guid[0])==1 && deletion.Parts.Count==0 && deletion.Specification().Count==0,"erase last instance");
+        var spatialContour=new[]{new Vector3(10,20,30),new Vector3(10,520,30),new Vector3(10,520,230),new Vector3(10,20,230)};
+        var frame=ContourPlane.Fit(spatialContour,new Vector3(0,0,1));
+        var spatialPlate=new PolygonPlateShape{Thickness=12,Outer=spatialContour.Select(p=>ContourPlane.Project(frame,p)).ToList()};
+        Check(Near(spatialPlate.NetAreaMm2(),100000),"vertical contour independent of UCS");
+        foreach(var v in spatialContour)
+        {
+            var p=ContourPlane.Project(frame,v);var world=frame.ToWorld(new Vector3(p.X,p.Y,0));
+            Check(Near(world.X,v.X)&&Near(world.Y,v.Y)&&Near(world.Z,v.Z),"contour world roundtrip");
+        }
+        var tilted=new[]{new Vector3(0,0,0),new Vector3(100,0,100),new Vector3(100,100,100),new Vector3(0,100,0)};
+        var tiltedFrame=ContourPlane.Fit(tilted,new Vector3(0,0,1));
+        Check(Near(new PolygonPlateShape{Thickness=12,Outer=tilted.Select(p=>ContourPlane.Project(tiltedFrame,p)).ToList()}.NetAreaMm2(),10000*Math.Sqrt(2)),"inclined contour area");
+        Reject(()=>ContourPlane.Project(tiltedFrame,new Vector3(0,0,1)),"off-plane hole rejected");
+        tilted[3].Z=1;Reject(()=>ContourPlane.Fit(tilted,new Vector3(0,0,1)),"nonplanar contour rejected");
+        Reject(()=>ContourPlane.Fit(new[]{new Vector3(0,0,0),new Vector3(1,1,1),new Vector3(2,2,2)},new Vector3(0,0,1)),"collinear contour rejected");
+        var arrayMark=new AssemblyMark();
+        var originalInstance=arrayMark.AddPart(def,new RigidPlacement {Origin=new Vector3(10,20,30),AxisX=new Vector3(0,1,0),AxisY=new Vector3(-1,0,0)});
+        var batch=arrayMark.LinearCopies(originalInstance.Id,new Vector3(200,0,0),3);
+        Check(batch.Count==3&&batch[0].Placement.Origin.X==210&&batch[2].Placement.Origin.X==610&&batch.All(i=>i.PartId==originalInstance.PartId&&i.Placement.AxisX.Y==1),"array origins and orientation");
+        Check(arrayMark.Specification().Single().Count==4&&Near(arrayMark.Specification().Single().TotalMassKg,37.68),"array quantities and mass");
+        Check(arrayMark.Instances.Select(i=>i.Id).Distinct().Count()==4,"array unique ids");
+        var beforeArray=Json.Write(arrayMark);
+        Reject(()=>arrayMark.LinearCopies(originalInstance.Id,new Vector3(),2),"zero array step");
+        Reject(()=>arrayMark.LinearCopies(originalInstance.Id,new Vector3(1,0,0),501),"array limit");
+        Reject(()=>arrayMark.CopyInstances(originalInstance.Id,new[]{new Vector3(5,5,5),new Vector3(double.NaN,0,0)}),"invalid batch atomic");
+        Check(Json.Write(arrayMark)==beforeArray,"failed batches preserve model");
+        var free=arrayMark.CopyInstances(originalInstance.Id,new[]{new Vector3(0,100,0),new Vector3(0,200,0)});
+        Check(free.Count==2&&free[1].Placement.Origin.Y==200&&arrayMark.Specification().Single().Count==6,"free batch copies");
         ShapeTests();
         ProjectTests();
         Console.WriteLine(checks + " assembly checks passed");

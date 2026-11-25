@@ -145,6 +145,37 @@ namespace KotNode.Core
             return instance;
         }
 
+        // Batch copies share the same definition but own their placement and UUID.
+        public List<PartInstance> CopyInstances(Guid id, IEnumerable<Vector3> origins)
+        {
+            Validate();
+            var source=FindInstance(id);
+            Guard.Require(origins!=null,"Не заданы точки копирования.");
+            var points=origins.Take(501).ToList();
+            Guard.Require(points.Count>=1&&points.Count<=500,"Допустимо от 1 до 500 дополнительных экземпляров.");
+            var result=new List<PartInstance>();
+            foreach(var point in points)
+            {
+                Guard.Require(point!=null&&point.IsFinite(),"Неверная точка копирования.");
+                var copy=Json.Copy(source);
+                copy.Id=Guid.NewGuid();
+                copy.Placement.Origin=new Vector3(point.X,point.Y,point.Z);
+                copy.Placement.Validate();
+                result.Add(copy);
+            }
+            Instances.AddRange(result);
+            return result;
+        }
+
+        public List<PartInstance> LinearCopies(Guid id,Vector3 step,int count)
+        {
+            Validate();
+            var source=FindInstance(id);
+            Guard.Require(count>=1&&count<=500&&step!=null&&step.IsFinite()&&Guard.Finite(step.Dot(step))&&step.Dot(step)>1e-12,"Неверный шаг или число дополнительных экземпляров.");
+            var o=source.Placement.Origin;
+            return CopyInstances(id,Enumerable.Range(1,count).Select(i=>new Vector3(o.X+i*step.X,o.Y+i*step.Y,o.Z+i*step.Z)));
+        }
+
         public PartInstance CopyInstance(Guid id)
         {
             Validate();
@@ -468,6 +499,51 @@ namespace KotNode.Core
             return p;
         }
     }
+    // Plane fitted from a polygon in world coordinates, independent of the editor UCS.
+    public static class ContourPlane
+    {
+        public const double ToleranceMm=1e-6;
+        static Vector3 Sub(Vector3 a,Vector3 b)=>new Vector3(a.X-b.X,a.Y-b.Y,a.Z-b.Z);
+        static Vector3 Scale(Vector3 a,double s)=>new Vector3(a.X*s,a.Y*s,a.Z*s);
+        static Vector3 Unit(Vector3 a)
+        {
+            double n=Math.Sqrt(a.Dot(a));
+            Guard.Require(Guard.Positive(n),"Не удалось определить плоскость контура.");
+            return Scale(a,1/n);
+        }
+        public static RigidPlacement Fit(IList<Vector3> points,Vector3 preferredNormal)
+        {
+            Guard.Require(points!=null&&points.Count>=3&&points.All(p=>p!=null&&p.IsFinite()),"Неверные точки контура.");
+            var origin=points[0];
+            var vectors=points.Skip(1).Select(p=>Sub(p,origin)).ToList();
+            var longest=vectors.OrderByDescending(v=>v.Dot(v)).First();
+            Guard.Require(longest.Dot(longest)>ToleranceMm*ToleranceMm,"Контур вырожден.");
+            var x=Unit(longest);
+            var cross=vectors.Select(v=>x.Cross(v)).OrderByDescending(v=>v.Dot(v)).First();
+            Guard.Require(cross.Dot(cross)>ToleranceMm*ToleranceMm,"Точки контура лежат на одной прямой.");
+            var z=Unit(cross);
+            var normal=preferredNormal!=null&&preferredNormal.IsFinite()&&preferredNormal.Dot(preferredNormal)>0?Unit(preferredNormal):new Vector3(0,0,1);
+            double dot=z.Dot(normal);
+            // For perpendicular normals use a deterministic world-axis sign.
+            if(Math.Abs(dot)<1e-9)
+                dot=Math.Abs(z.X)>=Math.Abs(z.Y)&&Math.Abs(z.X)>=Math.Abs(z.Z)?z.X:Math.Abs(z.Y)>=Math.Abs(z.Z)?z.Y:z.Z;
+            if(dot<0)z=Scale(z,-1);
+            var y=Unit(z.Cross(x));
+            var frame=new RigidPlacement {Origin=new Vector3(origin.X,origin.Y,origin.Z),AxisX=x,AxisY=y};
+            frame.Validate();
+            foreach(var p in points)Project(frame,p);
+            return frame;
+        }
+        public static Point2 Project(RigidPlacement frame,Vector3 point)
+        {
+            frame.Validate();
+            Guard.Require(point!=null&&point.IsFinite(),"Неверная точка контура.");
+            var v=Sub(point,frame.Origin);
+            Guard.Require(Math.Abs(v.Dot(frame.AxisX.Cross(frame.AxisY)))<=ToleranceMm,"Контур и отверстия должны лежать в одной плоскости.");
+            return new Point2(v.Dot(frame.AxisX),v.Dot(frame.AxisY));
+        }
+    }
+
     public sealed class AssemblySpecRow
     {
         public Guid PartId { get; set; }
