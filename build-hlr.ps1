@@ -11,6 +11,9 @@ $vswhere=Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\v
 if (!(Test-Path $vswhere)) { throw 'Visual Studio with C++ and C++/CLI is required.' }
 $msbuild=& $vswhere -latest -products '*' -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
 if (!$msbuild) { throw 'MSBuild not found.' }
+Write-Host "MSBuild: $msbuild"
+Write-Host "ObjectARX: $ArxSdk"
+if (!(Test-Path (Join-Path $ArxSdk 'inc\AcDbMgd.dll'))) { throw 'AcDbMgd.dll missing in SDK.' }
 Push-Location $PSScriptRoot
 try {
     & $msbuild src/NativeHlr/KotNode.HlrBridge.vcxproj /t:Rebuild /p:Configuration=Release /p:Platform=x64 "/p:PlatformToolset=$PlatformToolset" "/p:ArxSdk=$ArxSdk" /m:1

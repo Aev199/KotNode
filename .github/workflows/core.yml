@@ -16,7 +16,8 @@ jobs:
       - run: dotnet run --project tests/KotNode.Tests.csproj -c Release
       - run: dotnet build src/Core/KotNode.Core.csproj -c Release -f net48
   plugin:
-    runs-on: windows-latest
+    runs-on: windows-2022
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -25,9 +26,29 @@ jobs:
       - name: Build AutoCAD 2021 plugin and run core checks
         shell: pwsh
         run: ./build.ps1
+      - name: Acquire Autodesk ObjectARX 2021 SDK
+        shell: pwsh
+        run: ./ci/get-arx2021.ps1
+      - name: Ensure MSVC v142 and C++/CLI
+        shell: pwsh
+        run: ./ci/ensure-v142.ps1
+      - name: Build native HLR bridge
+        shell: pwsh
+        run: ./build-hlr.ps1 -ArxSdk $env:ARX2021
+      - name: Verify complete plugin package
+        shell: pwsh
+        run: |
+          $required = 'KotNode.AutoCAD.dll','KotNode.Core.dll','KotNode.HlrBridge.dll'
+          foreach ($name in $required) {
+            $file = Get-Item (Join-Path plugin $name) -ErrorAction Stop
+            if ($file.Length -lt 1024) { throw "Invalid binary: $name" }
+            $assembly = [Reflection.AssemblyName]::GetAssemblyName($file.FullName)
+            Write-Host "$name : $($assembly.FullName), $($file.Length) bytes"
+          }
+          Get-ChildItem plugin -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $([IO.Path]::GetFileName($_.Path))" } | Set-Content plugin/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: KotNode-AutoCAD2021-experimental
+          name: KotNode-AutoCAD2021-HLR
           path: plugin/
           if-no-files-found: error
           retention-days: 7

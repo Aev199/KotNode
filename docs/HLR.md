@@ -6,7 +6,7 @@
 В локальной системе представления наблюдатель находится со стороны +Z, сохраняется Z <= 0.
 
 ## Сборка (экспериментальная)
-Обычный build.ps1 собирает управляемый плагин. Дополнительный мост требует легально полученного ObjectARX SDK 2021 x64, Visual Studio с C++/CLI, MSVC v142 и .NET Framework 4.8 SDK.
+Обычный build.ps1 собирает управляемый плагин. CI на windows-2022 скачивает оригинальный SDK 2021 с сервера Autodesk, проверяет наличие HLR SDK, устанавливает v142 C++/CLI при необходимости и запускает build-hlr.ps1. Артефакт KotNode-AutoCAD2021-HLR публикуется только при наличии всех трёх DLL; SHA256SUMS.txt содержит контрольные суммы. SDK и DBX в артефакт не входят. Дополнительный мост требует легально полученного ObjectARX SDK 2021 x64, Visual Studio с C++/CLI, MSVC v142 и .NET Framework 4.8 SDK.
 Скачать SDK: https://aps.autodesk.com/developer/overview/objectarx-autocad-sdk
 Из корня репозитория:
 ```powershell
@@ -15,7 +15,7 @@
 ```
 Поместить KotNode.HlrBridge.dll рядом с KotNode.AutoCAD.dll и KotNode.Core.dll. Перезапустить AutoCAD. При необходимости загрузить штатный AsdkHlrApi24.dbx из каталога AutoCAD 2021 через APPLOAD. Не копировать DBX из других версий. NETLOAD обычного плагина, NAHLRSTATUS, NAVIEW.
 
-Мост использует API, описанный в SDK и https://github.com/MadhukarMoogala/HLRNetSample ; SDK и Autodesk DLL не распространяются в репозитории. Native HLR пока не проверен в AutoCAD; обычный CI не компилирует C++/CLI без SDK. При ошибке NPLOG.
+Мост использует API, описанный в SDK и https://github.com/MadhukarMoogala/HLRNetSample ; SDK и Autodesk DLL не распространяются в репозитории. Native HLR пока не проверен в AutoCAD; успех сборки CI проверяет компиляцию, но не запуск в AutoCAD. При ошибке NPLOG.
 
 ## Независимая проверка без моста
 NAEXPORTCUT выбирает направление и точку секущей плоскости, экспортирует оставшиеся тела в новый DWG (исходник не изменяется). Открыть его, установить Top/WCS, Zoom Extents, FLATSHOT. Это временная проверка геометрии разреза, без штриховки и автоматической связи с маркой. Для готового чистого сечения использовать NACROSS. NAIMPORTVIEW по-прежнему доступен для ручного блока обычного вида.
