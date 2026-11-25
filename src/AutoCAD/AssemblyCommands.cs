@@ -406,6 +406,32 @@ namespace KotNode.AutoCAD
             if(ids.Length==0)throw new InvalidOperationException("В текущей марке объект не найден.");
             doc.Editor.SetImpliedSelection(ids);
         });
+        [CommandMethod("NATREEDELETE",CommandFlags.Modal)]
+        public void DeleteFromTree()=>Run("NATREEDELETE",(doc,tr)=>{
+            var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
+            var key=Text(doc.Editor,"Идентификатор позиции или экземпляра: ");
+            if(key==null)return;
+            if(!Guid.TryParse(key,out var id))throw new InvalidOperationException("Выберите конструктивную деталь в дереве.");
+            var instances=m.Instances.Where(i=>i.Id==id||i.PartId==id).ToList();
+            if(instances.Count==0)
+            {
+                AssemblyDrawing.Save(doc.Database,tr,m);
+                doc.Editor.WriteMessage("\nОтсутствующие экземпляры исключены из марки.");
+                return;
+            }
+            var option=new PromptKeywordOptions("\nУдалить "+instances.Count+" экземпляров? [Yes/No] <No>: ");
+            option.Keywords.Add("Yes");option.Keywords.Add("No");option.Keywords.Default="No";
+            var answer=doc.Editor.GetKeywords(option);
+            if(answer.Status!=PromptStatus.OK||answer.StringResult!="Yes")return;
+            foreach(var instance in instances)
+            {
+                var block=refs[instance.Id];block.UpgradeOpen();block.Erase();
+                m.RemoveInstance(instance.Id);
+            }
+            foreach(var partId in instances.Select(i=>i.PartId).Distinct())
+                if(!m.Instances.Any(i=>i.PartId==partId))m.RemoveUnusedDefinition(partId);
+            AssemblyDrawing.Save(doc.Database,tr,m);
+        });
         [CommandMethod("NAAUX",CommandFlags.Modal)]
         public void Auxiliary()=>Run("NAAUX",(doc,tr)=>{
             var m=Need(doc,tr);AssemblyDrawing.Synchronize(doc.Database,tr,m);
@@ -437,6 +463,12 @@ namespace KotNode.AutoCAD
                     if(tree.SelectedNode?.Tag is string key)Queue("NASELECT "+key);
                 };
                 select.Click+=(s,e)=>pick();tree.NodeMouseDoubleClick+=(s,e)=>pick();panel.Controls.Add(select);
+                var remove=new Button {Text="Удалить из дерева",AutoSize=true};
+                remove.Click+=(s,e)=>{
+                    if(treeDocument!=AcApp.DocumentManager.MdiActiveDocument){Queue("NAREFRESH");return;}
+                    if(tree.SelectedNode?.Tag is string key && Guid.TryParse(key,out _))Queue("NATREEDELETE "+key);
+                };
+                panel.Controls.Add(remove);
                 layout.Controls.Add(panel,0,3);
                 palette=new PaletteSet("Узлы — конструктор",new Guid("e51c3c38-b277-4753-9b27-03ed12d5c50f")){Size=new Size(340,650),MinimumSize=new Size(300,420),Style=PaletteSetStyles.ShowCloseButton|PaletteSetStyles.ShowAutoHideButton};
                 palette.Add("Конструктор",layout);
