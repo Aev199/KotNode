@@ -456,9 +456,9 @@ namespace KotNode.AutoCAD
         [CommandMethod("NAPSECTION",CommandFlags.Modal)]
         public void ParametricSection()=>Run("NAPSECTION",(doc,tr)=>AddView(doc,tr,true,true,true));
         [CommandMethod("NAVIEW",CommandFlags.Modal)]
-        public void View()=>Run("NAVIEW",(doc,tr)=>FlatshotWorkflow.Prepare(doc,tr,false));
+        public void View()=>Run("NAVIEW",(doc,tr)=>AddView(doc,tr,false,false,true));
         [CommandMethod("NASECTION",CommandFlags.Modal)]
-        public void SectionView()=>Run("NASECTION",(doc,tr)=>FlatshotWorkflow.Prepare(doc,tr,true));
+        public void SectionView()=>Run("NASECTION",(doc,tr)=>AddView(doc,tr,true,true,true));
         [CommandMethod("NAFLATPREP",CommandFlags.Modal)]
         public void FlatPrep()=>Run("NAFLATPREP",(doc,tr)=>{
             var options=new PromptKeywordOptions("\nПодготовить [View/Section] <View>: "){AllowNone=true};
@@ -473,7 +473,7 @@ namespace KotNode.AutoCAD
         public void CrossView()=>Run("NACROSS",(doc,tr)=>AddView(doc,tr,true));
         [CommandMethod("NAHLRSTATUS",CommandFlags.Modal)]
         public void HlrStatus()=>Run("NAHLRSTATUS",(doc,tr)=>
-            doc.Editor.WriteMessage("\nHLR отключён: тестовый параллелепипед возвращал пустую геометрию. Для видов используйте NAVIEW → FLATSHOT → NAFLATFINISH."));
+            doc.Editor.WriteMessage("\nВиды и разрезы строятся из параметров марки: NAVIEW и NASECTION."));
         [CommandMethod("NAEXPORTCUT",CommandFlags.Modal)]
         public void ExportCut()=>Run("NAEXPORTCUT",(doc,tr)=>{
             var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
@@ -493,7 +493,7 @@ namespace KotNode.AutoCAD
             var entry=AssemblyViews.Find(doc.Database,tr,m).SingleOrDefault(e=>e.Reference.ObjectId==picked.ObjectId);
             if(entry==null)throw new InvalidOperationException("Выберите представление марки.");
             var data=entry.Data;
-            if(data.ManualSnapshot)throw new InvalidOperationException("Снимок FLATSHOT нельзя перестроить этим редактором. Создайте новое представление командами NAVIEW и NAFLATFINISH.");
+            if(data.ManualSnapshot)throw new InvalidOperationException("Старый снимок не связан с параметрами. Создайте новый вид командой NAVIEW или NASECTION.");
             using(var form=new Fields("Свойства представления"))
             {
                 form.TextField("Название","name",data.Name);
@@ -525,7 +525,7 @@ namespace KotNode.AutoCAD
             var count=AssemblyViews.Update(doc.Database,tr,m,refs);
             if(count>0)AssemblyDrawing.Save(doc.Database,tr,m);
             var manual=AssemblyViews.Find(doc.Database,tr,m).Count(e=>e.Data.ManualSnapshot);
-            doc.Editor.WriteMessage("\nАвтоматически обновлено: "+count+"; снимков FLATSHOT, требующих повторной подготовки после изменения модели: "+manual);
+            doc.Editor.WriteMessage("\nАвтоматически обновлено: "+count+"; старых несвязанных снимков (создайте вместо них параметрические виды): "+manual);
         });
         [CommandMethod("NAUPDATEVIEW",CommandFlags.Modal)]
         public void UpdateView()=>Run("NAUPDATEVIEW",(doc,tr)=>{
@@ -697,7 +697,7 @@ namespace KotNode.AutoCAD
                 tree=new System.Windows.Forms.TreeView {Dock=DockStyle.Fill,HideSelection=false,ShowNodeToolTips=true};layout.Controls.Add(tree,0,1);
                 treeStatus=new Label {AutoSize=true,MaximumSize=new Size(300,0)};layout.Controls.Add(treeStatus,0,2);
                 var panel=new FlowLayoutPanel {Dock=DockStyle.Fill,AutoSize=true,FlowDirection=System.Windows.Forms.FlowDirection.LeftToRight,WrapContents=true,Padding=new Padding(1)};
-                foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Труба","NAPIPE"},new[]{"Лист","NAPLATE"},new[]{"Лист по контуру","NAPOLYPLATE"},new[]{"Кривой лист","NACURVED"},new[]{"Двутавр","NABEAM"},new[]{"Арматура","NAREBAR"},new[]{"Вспом. чертёж","NAAUX"},new[]{"Создать вид","NAVIEW"},new[]{"Создать разрез","NASECTION"},new[]{"Завершить FLATSHOT","NAFLATFINISH"},new[]{"Импорт FLATSHOT","NAIMPORTVIEW"},new[]{"Чистое сечение","NACROSS"},new[]{"Экспорт отсечённой модели","NAEXPORTCUT"},new[]{"Свойства вида","NAEDITVIEW"},new[]{"Обновить вид","NAUPDATEVIEW"},new[]{"Обновить виды","NAUPDATEVIEWS"},new[]{"Свойства","NAEDIT"},new[]{"Копировать","NACOPY"},new[]{"Линейный массив","NAARRAY"},new[]{"Отделить","NADETACH"},new[]{"Удалить","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"},new[]{"Восстановить","NAREPAIR"},new[]{"Обновить дерево","NAREFRESH"}})
+                foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Труба","NAPIPE"},new[]{"Лист","NAPLATE"},new[]{"Лист по контуру","NAPOLYPLATE"},new[]{"Кривой лист","NACURVED"},new[]{"Двутавр","NABEAM"},new[]{"Арматура","NAREBAR"},new[]{"Вспом. чертёж","NAAUX"},new[]{"Создать вид","NAVIEW"},new[]{"Создать разрез","NASECTION"},new[]{"Чистое сечение","NACROSS"},new[]{"Свойства вида","NAEDITVIEW"},new[]{"Обновить вид","NAUPDATEVIEW"},new[]{"Обновить виды","NAUPDATEVIEWS"},new[]{"Свойства","NAEDIT"},new[]{"Копировать","NACOPY"},new[]{"Линейный массив","NAARRAY"},new[]{"Отделить","NADETACH"},new[]{"Удалить","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"},new[]{"Восстановить","NAREPAIR"},new[]{"Обновить дерево","NAREFRESH"}})
                 {
                     var cmd=pair[1];var button=new Button {Text=pair[0],AutoSize=true};
                     button.Click+=(s,e)=>Queue(cmd);panel.Controls.Add(button);

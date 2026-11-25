@@ -16,7 +16,7 @@ namespace KotNode.AutoCAD
     public static class AssemblyViews
     {
         internal const string Key="KOTNODE_VIEW_1";
-        internal const int Revision=9;
+        internal const int Revision=10;
         internal const string VisibleLayer="NA_VISIBLE",HiddenLayer="NA_HIDDEN",CutLayer="NA_CUT",HatchLayer="NA_HATCH";
         static double PaperScale(ViewData d)=>d.AnnotationScale>0?d.AnnotationScale:20;
         static void Layers(Database db,Transaction tr)
@@ -436,7 +436,8 @@ namespace KotNode.AutoCAD
         }
         internal static void Rebuild(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs,Entry entry)
         {
-            if(entry.Data.ManualSnapshot)throw new InvalidOperationException("Снимки FLATSHOT нельзя обновлять автоматически. Выполните NAVIEW/NASECTION, затем NAFLATFINISH.");
+            if(entry.Data.ManualSnapshot)throw new InvalidOperationException("Старый снимок не связан с параметрами. Создайте новый вид командой NAVIEW или NASECTION.");
+            if(!entry.Data.IsSection||entry.Data.FullCut)entry.Data.ParametricPrototype=true;
             var geometry=Build(db,tr,mark,refs,entry.Data);
             AssemblyDrawing.Replace(entry.Reference,geometry);
             entry.Data.SourceHash=Signature(mark);entry.Data.GeneratorRevision=Revision;entry.Data.ManualSnapshot=false;
@@ -449,7 +450,11 @@ namespace KotNode.AutoCAD
             int count=0;
             foreach(var entry in entries)
             {
-                if(entry.Data.ManualSnapshot)continue;
+                if(entry.Data.ManualSnapshot)
+                {
+                    if(only.HasValue)throw new InvalidOperationException("Старый несвязанный снимок. Создайте новый вид командой NAVIEW или NASECTION.");
+                    continue;
+                }
                 Rebuild(db,tr,mark,refs,entry);count++;
             }
             return count;
