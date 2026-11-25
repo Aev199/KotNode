@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.Serialization;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
@@ -16,17 +17,17 @@ namespace KotNode.AutoCAD
     {
         internal const string JobKey="KOTNODE_FLATSHOT_JOB_1";
 
-        // Public so that DataContractJsonSerializer can preserve metadata in DWG.
+        [DataContract]
         public sealed class Job
         {
-            public Guid MarkId { get; set; }
-            public string MarkHash { get; set; }
-            public string Name { get; set; }
-            public bool IsSection { get; set; }
-            public bool Hidden { get; set; }
-            public bool NoHatch { get; set; }
-            public double AnnotationScale { get; set; }
-            public RigidPlacement Frame { get; set; }
+            [DataMember(Order=1)] public Guid MarkId { get; set; }
+            [DataMember(Order=2)] public string MarkHash { get; set; }
+            [DataMember(Order=3)] public string Name { get; set; }
+            [DataMember(Order=4)] public bool IsSection { get; set; }
+            [DataMember(Order=5)] public bool Hidden { get; set; }
+            [DataMember(Order=6)] public bool NoHatch { get; set; }
+            [DataMember(Order=7)] public double AnnotationScale { get; set; }
+            [DataMember(Order=8)] public RigidPlacement Frame { get; set; }
         }
 
         internal static void Prepare(Document doc,Transaction tr,bool section)
@@ -70,7 +71,12 @@ namespace KotNode.AutoCAD
                     throw new InvalidOperationException("Исходный DWG нельзя перезаписывать.");
                 var job=new Job{MarkId=mark.Id,MarkHash=AssemblyViews.Signature(mark),Name=label.StringResult.Trim(),IsSection=section,
                     Hidden=showHidden,NoHatch=!hatch,AnnotationScale=value,Frame=frame};
-                Diagnostics.Step("Экспорт изолированной модели FLATSHOT");
+                // Fail before creating a DWG if the metadata contract ever becomes incompatible.
+                var serialized=KotNode.Core.Json.Write(job);
+                var roundTrip=KotNode.Core.Json.Read<Job>(serialized);
+                if(roundTrip==null||roundTrip.MarkId!=job.MarkId||roundTrip.MarkHash!=job.MarkHash||roundTrip.Frame==null)
+                    throw new InvalidOperationException("Не удалось проверить метаданные задания FLATSHOT.");
+                Diagnostics.Step("Метаданные FLATSHOT проверены; экспорт изолированной модели");
                 AssemblyViews.ExportForFlatshot(tr,refs,job,dlg.FileName);
                 AssemblyDrawing.Save(doc.Database,tr,mark);
                 ed.WriteMessage("\nСоздан файл "+dlg.FileName+
