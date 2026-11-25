@@ -92,7 +92,8 @@ static class AssemblyModelTests
         edited.RemoveInstance(b.Id); edited.RemoveUnusedDefinition(detached.Id);
         Check(edited.Parts.Count==1 && edited.Instances.Count==1 && edited.Specification().Single().Count==1,"delete instance and unused definition");
         var standardBeam=BeamCatalog.Create("40Ш2",2000);
-        Check(standardBeam.Height==390 && standardBeam.Width==300 && standardBeam.RootRadius==22 && standardBeam.CatalogAreaMm2==13595,"catalog profile dimensions");
+        Check(Near(standardBeam.Height,390) && Near(standardBeam.Width,300) && Near(standardBeam.RootRadius,22) && Near(standardBeam.CatalogAreaMm2.Value,13595),"catalog profile dimensions");
+        Check(standardBeam.CatalogAreaMm2==13595,"catalog decimal conversion preserves whole square millimeters");
         var standardPart=new PartDefinition { Name="Двутавр",Kind=PartKind.IBeam,IBeam=standardBeam };
         Check(Near(standardPart.UnitMassKg(),213.4),"catalog nominal linear mass");
         Check(Json.Copy(standardPart).IBeam.RootRadius==22 && Near(Json.Copy(standardPart).UnitMassKg(),213.4),"catalog serialization");

@@ -64,7 +64,7 @@ namespace KotNode.Core
             if(row==null)throw new ArgumentException("Профиль отсутствует в текущей выборке сортамента.");
             double N(int i)=>double.Parse(row[i],CultureInfo.InvariantCulture);
             var b=new IBeamShape{Profile=row[0],Height=N(1),Width=N(2),WebThickness=N(3),FlangeThickness=N(4),
-                RootRadius=N(5),CatalogAreaMm2=N(6)*100,CatalogMassKgPerM=N(7),CatalogStandard=Standard,Length=length};
+                RootRadius=N(5),CatalogAreaMm2=(double)(decimal.Parse(row[6],CultureInfo.InvariantCulture)*100m),CatalogMassKgPerM=N(7),CatalogStandard=Standard,Length=length};
             b.Validate();return b;
         }
     }
