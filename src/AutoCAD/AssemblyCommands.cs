@@ -372,17 +372,30 @@ namespace KotNode.AutoCAD
             bool hidden=false;
             if(!section)
             {
-                var option=new PromptKeywordOptions("\nПоказывать невидимые линии отдельных тел? [Yes/No] <No>: ");
+                var option=new PromptKeywordOptions("\nПоказывать невидимые линии? [Yes/No] <No>: ");
                 option.Keywords.Add("Yes");option.Keywords.Add("No");option.Keywords.Default="No";option.AllowNone=true;
                 var answer=doc.Editor.GetKeywords(option);
                 if(answer.Status!=PromptStatus.OK&&answer.Status!=PromptStatus.None)return;
                 hidden=answer.StringResult=="Yes";
             }
+            bool noHatch=false;
+            if(section)
+            {
+                var option=new PromptKeywordOptions("\nШтриховать сечение? [Yes/No] <Yes>: ");
+                option.Keywords.Add("Yes");option.Keywords.Add("No");option.Keywords.Default="Yes";option.AllowNone=true;
+                var answer=doc.Editor.GetKeywords(option);
+                if(answer.Status!=PromptStatus.OK&&answer.Status!=PromptStatus.None)return;
+                noHatch=answer.StringResult=="No";
+            }
+            var scaleOptions=new PromptDoubleOptions("\nМасштаб оформления 1 <20>: ") {AllowNone=true,AllowNegative=false,AllowZero=false,DefaultValue=20,UseDefaultValue=true};
+            var scale=doc.Editor.GetDouble(scaleOptions);
+            if(scale.Status!=PromptStatus.OK&&scale.Status!=PromptStatus.None)return;
+            double annotationScale=scale.Status==PromptStatus.None?20:scale.Value;
             var p=doc.Editor.GetPoint("\nТочка размещения плоского изображения (XY мировой системы): ");
             if(p.Status!=PromptStatus.OK)return;
             var location=p.Value.TransformBy(doc.Editor.CurrentUserCoordinateSystem);
             Diagnostics.Step(section?"Построение точного сечения":"Проекция тел AutoCAD");
-            AssemblyViews.Create(doc.Database,tr,m,refs,new AssemblyViews.ViewData{Name=name,Frame=frame,IsSection=section,Hidden=hidden},location);
+            AssemblyViews.Create(doc.Database,tr,m,refs,new AssemblyViews.ViewData{Name=name,Frame=frame,IsSection=section,Hidden=hidden,NoHatch=noHatch,AnnotationScale=annotationScale},location);
             AssemblyDrawing.Save(doc.Database,tr,m);
             doc.Editor.WriteMessage("\nПредставление создано. Геометрия 1:1; масштаб печати задаётся на листе.");
         }
@@ -442,10 +455,10 @@ namespace KotNode.AutoCAD
                         var hash=AssemblyViews.Signature(m);
                         foreach(var view in views)
                         {
-                            var stale=view.Data.SourceHash!=hash;
+                            var stale=AssemblyViews.IsStale(view.Data,hash);
                             var node=branch.Nodes.Add((view.Data.IsSection?"Сечение: ":"Вид: ")+view.Data.Name+(stale?" [обновить]":""));
                             node.Tag=view.Data.Id.ToString("D");
-                            node.ToolTipText=stale?"Исходная модель изменилась. Выполните NAUPDATEVIEW или NAUPDATEVIEWS.":"Представление соответствует сохранённой модели.";
+                            node.ToolTipText=(stale?"Требуется перестроение. ":"Представление актуально. ")+"Масштаб оформления 1:"+(view.Data.AnnotationScale>0?view.Data.AnnotationScale:20);
                             if((string)node.Tag==previous)selected=node;
                         }
                         branch.Expand();
