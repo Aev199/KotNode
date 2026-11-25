@@ -532,6 +532,8 @@ namespace KotNode.AutoCAD
                 data.Name=form.Get("name").Trim();data.AnnotationScale=form.Value("scale");
                 if(data.IsSection)data.NoHatch=!form.Checked("hatch");
                 if(!data.IsSection||data.FullCut)data.Hidden=form.Checked("hidden");
+                if(form.Checked("plane")&&(data.LineOverrides?.Count??0)>0)
+                    throw new InvalidOperationException("Сначала снимите корректировки линий (NALINERESET), затем изменяйте плоскость.");
                 if(form.Checked("plane")||form.Checked("anchor")||form.Checked("detach"))
                 {
                     var oldAnchor=m.Instances.SingleOrDefault(i=>data.FrameAnchorId.HasValue&&i.Id==data.FrameAnchorId.Value);
@@ -556,6 +558,88 @@ namespace KotNode.AutoCAD
             }
             AssemblyViews.Rebuild(doc.Database,tr,m,refs,entry);
             AssemblyDrawing.Save(doc.Database,tr,m);
+        });
+        [CommandMethod("NALINEEDIT",CommandFlags.Modal)]
+        public void EditLines()=>Run("NALINEEDIT",(doc,tr)=>{
+            var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
+            var entries=AssemblyViews.Find(doc.Database,tr,m);
+            var ed=doc.Editor;var signature=AssemblyViews.Signature(m);
+            var action=new PromptKeywordOptions("\nЛинии [Visible/Hidden/Suppress/Auto] <Hidden>: "){AllowNone=true};
+            foreach(var k in new[]{"Visible","Hidden","Suppress","Auto"})action.Keywords.Add(k);
+            action.Keywords.Default="Hidden";
+            var answer=ed.GetKeywords(action);
+            if(answer.Status!=PromptStatus.OK&&answer.Status!=PromptStatus.None)return;
+            var mode=answer.StringResult=="Visible"?ViewLineMode.Visible:answer.StringResult=="Suppress"?ViewLineMode.Suppressed:answer.StringResult=="Auto"?ViewLineMode.Auto:ViewLineMode.Hidden;
+            var scope=new PromptKeywordOptions("\nОбласть [Fragment/Edge] <Fragment>: "){AllowNone=true};
+            scope.Keywords.Add("Fragment");scope.Keywords.Add("Edge");scope.Keywords.Default="Fragment";
+            var chosen=ed.GetKeywords(scope);
+            if(chosen.Status!=PromptStatus.OK&&chosen.Status!=PromptStatus.None)return;
+            bool whole=chosen.StringResult=="Edge";
+            var batch=Guid.NewGuid();var rules=new List<ViewLineOverride>();var seen=new HashSet<ObjectId>();
+            AssemblyViews.Entry selected=null;BlockReference child=null;
+            while(true)
+            {
+                var opt=new PromptNestedEntityOptions("\nВыберите линию вида (Enter — применить, Esc — отменить): "){AllowNone=true};
+                var hit=ed.GetNestedEntity(opt);
+                if(hit.Status==PromptStatus.None)break;
+                if(hit.Status!=PromptStatus.OK)return;
+                var containers=hit.GetContainers()??new ObjectId[0];
+                var entry=entries.SingleOrDefault(e=>containers.Contains(e.Reference.ObjectId));
+                if(entry==null||entry.Data.ManualSnapshot||string.IsNullOrEmpty(entry.Data.GeneratedChildHandle))
+                {ed.WriteMessage("\nВыберите линию параметрического вида нового формата.");continue;}
+                if(selected!=null&&selected.Data.Id!=entry.Data.Id)
+                {ed.WriteMessage("\nЗа одну операцию корректируется только один вид.");continue;}
+                if(AssemblyViews.IsStale(entry.Data,signature))
+                {ed.WriteMessage("\nСначала обновите вид (NAUPDATEVIEW).");continue;}
+                var target=child??ViewShell.RequireUnchanged(tr,entry);
+                var entity=tr.GetObject(hit.ObjectId,OpenMode.ForRead) as Entity;
+                if(entity==null||entity.OwnerId!=target.BlockTableRecord||!containers.Contains(target.ObjectId))
+                {ed.WriteMessage("\nВыберите именно автоматически построенную линию.");continue;}
+                var source=ParametricViewDrawing.Source(tr,entity);
+                if(!ViewLineOverrides.HasSource(source))
+                {ed.WriteMessage("\nДля этой линии пока нет устойчивой кромки.");continue;}
+                if(!seen.Add(hit.ObjectId))continue;
+                selected=entry;child=target;rules.Add(ViewLineOverrides.Create(source,mode,whole,batch));
+                ed.WriteMessage("\nВыбрано линий: "+rules.Count);
+            }
+            if(selected==null||rules.Count==0)return;
+            if(selected.Data.LineOverrides==null)selected.Data.LineOverrides=new List<ViewLineOverride>();
+            selected.Data.LineOverrides.AddRange(rules);
+            AssemblyViews.Rebuild(doc.Database,tr,m,refs,selected);
+            AssemblyDrawing.Save(doc.Database,tr,m);
+            ed.WriteMessage("\nКорректировки сохранены: "+rules.Count+"; без соответствия: "+selected.Data.UnmatchedLineOverrides);
+        });
+        [CommandMethod("NALINERESET",CommandFlags.Modal)]
+        public void ResetLines()=>Run("NALINERESET",(doc,tr)=>{
+            var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
+            var ed=doc.Editor;var picked=ed.GetEntity("\nВыберите вид для восстановления линий: ");
+            if(picked.Status!=PromptStatus.OK)return;
+            var entry=AssemblyViews.Find(doc.Database,tr,m).SingleOrDefault(e=>e.Reference.ObjectId==picked.ObjectId);
+            if(entry==null||entry.Data.ManualSnapshot)throw new InvalidOperationException("Выберите параметрический вид.");
+            var journal=entry.Data.LineOverrides;
+            if(journal==null||journal.Count==0){ed.WriteMessage("\nНет ручных корректировок.");return;}
+            var choice=new PromptKeywordOptions("\nВосстановить [Last/All/Number] <Last>: "){AllowNone=true};
+            foreach(var k in new[]{"Last","All","Number"})choice.Keywords.Add(k);
+            choice.Keywords.Default="Last";
+            var answer=ed.GetKeywords(choice);
+            if(answer.Status!=PromptStatus.OK&&answer.Status!=PromptStatus.None)return;
+            if(answer.StringResult=="All")journal.Clear();
+            else if(answer.StringResult=="Number")
+            {
+                for(int i=0;i<journal.Count;i++)
+                    ed.WriteMessage("\n"+(i+1)+": "+journal[i].Mode+" "+journal[i].SourceKey+" ["+journal[i].From.ToString("0.###")+"–"+journal[i].To.ToString("0.###")+"]");
+                var opt=new PromptIntegerOptions("\nНомер корректировки: "){LowerLimit=1,UpperLimit=journal.Count};
+                var number=ed.GetInteger(opt);if(number.Status!=PromptStatus.OK)return;
+                journal.RemoveAt(number.Value-1);
+            }
+            else
+            {
+                var batch=journal.Last().BatchId;
+                journal.RemoveAll(r=>r.BatchId==batch);
+            }
+            AssemblyViews.Rebuild(doc.Database,tr,m,refs,entry);
+            AssemblyDrawing.Save(doc.Database,tr,m);
+            ed.WriteMessage("\nОсталось корректировок: "+journal.Count);
         });
         [CommandMethod("NAUPDATEVIEWS",CommandFlags.Modal)]
         public void UpdateViews()=>Run("NAUPDATEVIEWS",(doc,tr)=>{
@@ -629,7 +713,7 @@ namespace KotNode.AutoCAD
                         foreach(var view in views)
                         {
                             var stale=AssemblyViews.IsStale(view.Data,hash);
-                            var node=branch.Nodes.Add((view.Data.FullCut?"Разрез: ":view.Data.IsSection?"Сечение: ":"Вид: ")+view.Data.Name+(view.Data.ManualSnapshot?" [FLATSHOT]":string.IsNullOrEmpty(view.Data.GeneratedChildHandle)?" [старый формат]":"")+(stale?" [обновить]":""));
+                            var node=branch.Nodes.Add((view.Data.FullCut?"Разрез: ":view.Data.IsSection?"Сечение: ":"Вид: ")+view.Data.Name+(view.Data.ManualSnapshot?" [FLATSHOT]":string.IsNullOrEmpty(view.Data.GeneratedChildHandle)?" [старый формат]":"")+(stale?" [обновить]":"")+(view.Data.UnmatchedLineOverrides>0?" [неприменённые правки: "+view.Data.UnmatchedLineOverrides+"]":""));
                             node.Tag=view.Data.Id.ToString("D");
                             node.ToolTipText=(stale?"Требуется перестроение. ":"Представление актуально. ")+"Масштаб оформления 1:"+(view.Data.AnnotationScale>0?view.Data.AnnotationScale:20);
                             if((string)node.Tag==previous)selected=node;
@@ -753,7 +837,7 @@ namespace KotNode.AutoCAD
                 tree=new System.Windows.Forms.TreeView {Dock=DockStyle.Fill,HideSelection=false,ShowNodeToolTips=true};layout.Controls.Add(tree,0,1);
                 treeStatus=new Label {AutoSize=true,MaximumSize=new Size(300,0)};layout.Controls.Add(treeStatus,0,2);
                 var panel=new FlowLayoutPanel {Dock=DockStyle.Fill,AutoSize=true,FlowDirection=System.Windows.Forms.FlowDirection.LeftToRight,WrapContents=true,Padding=new Padding(1)};
-                foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Труба","NAPIPE"},new[]{"Лист","NAPLATE"},new[]{"Лист по контуру","NAPOLYPLATE"},new[]{"Кривой лист","NACURVED"},new[]{"Двутавр","NABEAM"},new[]{"Арматура","NAREBAR"},new[]{"Вспом. чертёж","NAAUX"},new[]{"Создать вид","NAVIEW"},new[]{"Создать разрез","NASECTION"},new[]{"Чистое сечение","NACROSS"},new[]{"Свойства вида","NAEDITVIEW"},new[]{"Перевести старый вид","NAMIGRATEVIEW"},new[]{"Обновить вид","NAUPDATEVIEW"},new[]{"Обновить виды","NAUPDATEVIEWS"},new[]{"Свойства","NAEDIT"},new[]{"Копировать","NACOPY"},new[]{"Линейный массив","NAARRAY"},new[]{"Отделить","NADETACH"},new[]{"Удалить","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"},new[]{"Восстановить","NAREPAIR"},new[]{"Обновить дерево","NAREFRESH"}})
+                foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Труба","NAPIPE"},new[]{"Лист","NAPLATE"},new[]{"Лист по контуру","NAPOLYPLATE"},new[]{"Кривой лист","NACURVED"},new[]{"Двутавр","NABEAM"},new[]{"Арматура","NAREBAR"},new[]{"Вспом. чертёж","NAAUX"},new[]{"Создать вид","NAVIEW"},new[]{"Создать разрез","NASECTION"},new[]{"Чистое сечение","NACROSS"},new[]{"Свойства вида","NAEDITVIEW"},new[]{"Линии вида","NALINEEDIT"},new[]{"Восстановить линии","NALINERESET"},new[]{"Перевести старый вид","NAMIGRATEVIEW"},new[]{"Обновить вид","NAUPDATEVIEW"},new[]{"Обновить виды","NAUPDATEVIEWS"},new[]{"Свойства","NAEDIT"},new[]{"Копировать","NACOPY"},new[]{"Линейный массив","NAARRAY"},new[]{"Отделить","NADETACH"},new[]{"Удалить","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"},new[]{"Восстановить","NAREPAIR"},new[]{"Обновить дерево","NAREFRESH"}})
                 {
                     var cmd=pair[1];var button=new Button {Text=pair[0],AutoSize=true};
                     button.Click+=(s,e)=>Queue(cmd);panel.Controls.Add(button);

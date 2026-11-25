@@ -24,12 +24,17 @@ namespace KotNode.Core
             public bool Hidden { get; set; }
             public bool Cut { get; set; }
             public Guid InstanceId { get; set; }
+            public string SourceKey { get; set; }
+            public double SourceFrom { get; set; }
+            public double SourceTo { get; set; }=1;
             public Point2 At(double t) => Circular
                 ? new Point2(X0 + Radius * Math.Cos(Start + Sweep*t), Y0 + Radius * Math.Sin(Start + Sweep*t))
                 : new Point2(X0 + (X1-X0)*t, Y0 + (Y1-Y0)*t);
             internal Curve2 Piece(double a,double b)
             {
                 var c=(Curve2)MemberwiseClone();
+                c.SourceFrom=SourceFrom+(SourceTo-SourceFrom)*a;
+                c.SourceTo=SourceFrom+(SourceTo-SourceFrom)*b;
                 if(Circular) { c.Start=Start+Sweep*a; c.Sweep=Sweep*(b-a); }
                 else { var p=At(a);var q=At(b);c.X0=p.X;c.Y0=p.Y;c.X1=q.X;c.Y1=q.Y; }
                 return c;
@@ -53,6 +58,7 @@ namespace KotNode.Core
             internal int Axis;
             internal double[] Min,Max,Center;
             internal double Outer,Inner;
+            internal string Orientation;
             // Closest material along a ray. The hollow core is genuinely empty.
             internal double? Front(Point2 p,bool cut)
             {
@@ -117,6 +123,9 @@ namespace KotNode.Core
                 var dirs=new[]{InFrame(place.AxisX,view,true),InFrame(place.AxisY,view,true),InFrame(place.AxisX.Cross(place.AxisY),view,true)};
                 var axes=p.Kind==PartKind.Pipe?new[]{0,0,Axis(dirs[2])}:dirs.Select(Axis).ToArray();var origin=InFrame(place.Origin,view);
                 var b=new Body{Id=instance.Id,Min=(double[])origin.Clone(),Max=(double[])origin.Clone(),Center=(double[])origin.Clone()};
+                b.Orientation=p.Kind==PartKind.Pipe
+                    ? "axis"+axes[2]+":"+Math.Sign(dirs[2][axes[2]])
+                    : string.Join(",",Enumerable.Range(0,3).Select(k=>axes[k]+":"+Math.Sign(dirs[k][axes[k]])));
                 if(p.Kind==PartKind.RectangularPlate)
                 {
                     var size=new[]{p.Plate.Length,p.Plate.Width,p.Plate.Thickness};
@@ -160,10 +169,10 @@ namespace KotNode.Core
             return d<a.Outer+b.Outer-Eps&&d+a.Outer>b.Inner+Eps&&d+b.Outer>a.Inner+Eps;
         }
         static List<Curve2> Rectangle(double x,double y,double u,double v)=>new List<Curve2>{Line(x,y,u,y),Line(u,y,u,v),Line(u,v,x,v),Line(x,v,x,y)};
-        static void Add(List<Edge> edges,Body b,Curve2 c,Func<Point2,double> depth,bool cut=false)
+        static void Add(List<Edge> edges,Body b,Curve2 c,Func<Point2,double> depth,bool cut=false,string role=null)
         {
             if(!c.Circular&&Sq(c.X1-c.X0)+Sq(c.Y1-c.Y0)<=Sq(Eps))return;
-            c.InstanceId=b.Id;c.Cut=cut;edges.Add(new Edge{Curve=c,Body=b,Depth=depth});
+            c.InstanceId=b.Id;c.Cut=cut;if(role!=null)c.SourceKey="analytic:"+b.Orientation+":"+role;edges.Add(new Edge{Curve=c,Body=b,Depth=depth});
         }
         static void Candidates(Body b,bool cut,List<Edge> edges)
         {
@@ -175,15 +184,15 @@ namespace KotNode.Core
                     var others=Enumerable.Range(0,3).Where(k=>k!=axis).ToArray();
                     var p=(double[])b.Min.Clone();p[others[0]]=a==0?b.Min[others[0]]:b.Max[others[0]];p[others[1]]=c==0?b.Min[others[1]]:b.Max[others[1]];
                     var q=(double[])p.Clone();q[axis]=b.Max[axis];double z=p[2];
-                    if(axis!=2&&(!cut||z<=Eps))Add(edges,b,Line(p[0],p[1],q[0],q[1]),_=>z);
+                    if(axis!=2&&(!cut||z<=Eps))Add(edges,b,Line(p[0],p[1],q[0],q[1]),_=>z,role:"box-edge:"+axis+":"+a+":"+c);
                 }
             }
             else if(b.Axis==2)
             {
                 double z=cut?Math.Min(0,b.Max[2]):b.Max[2];
                 if(z<b.Min[2]-Eps)return;
-                Add(edges,b,Circle(b.Center[0],b.Center[1],b.Outer),_=>z);
-                Add(edges,b,Circle(b.Center[0],b.Center[1],b.Inner),_=>z);
+                Add(edges,b,Circle(b.Center[0],b.Center[1],b.Outer),_=>z,role:"pipe-rim:outer:"+(cut&&b.Max[2]>0?"clipped":"front"));
+                Add(edges,b,Circle(b.Center[0],b.Center[1],b.Inner),_=>z,role:"pipe-rim:inner:"+(cut&&b.Max[2]>0?"clipped":"front"));
             }
             else
             {
@@ -192,12 +201,12 @@ namespace KotNode.Core
                     foreach(int sign in new[]{-1,1})
                     {
                         var p=(double[])b.Center.Clone();var q=(double[])p.Clone();p[a]=b.Min[a];q[a]=b.Max[a];p[r]=q[r]=b.Center[r]+sign*radius;
-                        if(!cut||z<=Eps)Add(edges,b,Line(p[0],p[1],q[0],q[1]),_=>z);
+                        if(!cut||z<=Eps)Add(edges,b,Line(p[0],p[1],q[0],q[1]),_=>z,role:"pipe-generator:"+(radius==b.Inner?"inner":"outer")+":"+sign);
                     }
                 foreach(double end in new[]{b.Min[a],b.Max[a]})
                 {
                     var p=(double[])b.Center.Clone();var q=(double[])p.Clone();p[a]=q[a]=end;p[r]-=b.Outer;q[r]+=b.Outer;
-                    Add(edges,b,Line(p[0],p[1],q[0],q[1]),point=>b.Front(point,cut)??double.PositiveInfinity);
+                    Add(edges,b,Line(p[0],p[1],q[0],q[1]),point=>b.Front(point,cut)??double.PositiveInfinity,role:"pipe-end:"+(end==b.Min[a]?"min":"max"));
                 }
             }
         }
@@ -219,7 +228,21 @@ namespace KotNode.Core
                     result.Add(new SectionArea{InstanceId=b.Id,Loops=new List<List<Curve2>>{Rectangle(p[0],p[1],q[0],q[1])}});
                 }
             }
-            foreach(var area in result)foreach(var loop in area.Loops)foreach(var c in loop){c.Cut=true;c.InstanceId=b.Id;}
+            foreach(var area in result)
+            {
+                string side="single";
+                if(b.Pipe&&b.Axis!=2)
+                {
+                    int r=1-b.Axis;
+                    var coords=area.Loops[0].SelectMany(c=>new[]{r==0?c.X0:c.Y0,r==0?c.X1:c.Y1}).ToArray();
+                    side=coords.Max()<=b.Center[r]+Eps?"negative":coords.Min()>=b.Center[r]-Eps?"positive":"whole";
+                }
+                for(int j=0;j<area.Loops.Count;j++)for(int k=0;k<area.Loops[j].Count;k++)
+                {
+                    var c=area.Loops[j][k];c.Cut=true;c.InstanceId=b.Id;
+                    c.SourceKey="analytic:"+b.Orientation+":section:"+side+":"+j+":"+k;
+                }
+            }
             return result;
         }
         static double Cross(Point2 a,Point2 b)=>a.X*b.Y-a.Y*b.X;

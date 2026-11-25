@@ -16,7 +16,7 @@ namespace KotNode.AutoCAD
     public static class AssemblyViews
     {
         internal const string Key="KOTNODE_VIEW_1";
-        internal const int Revision=12;
+        internal const int Revision=13;
         internal const string VisibleLayer="NA_VISIBLE",HiddenLayer="NA_HIDDEN",CutLayer="NA_CUT",HatchLayer="NA_HATCH";
         static double PaperScale(ViewData d)=>d.AnnotationScale>0?d.AnnotationScale:20;
         static void Layers(Database db,Transaction tr)
@@ -64,6 +64,8 @@ namespace KotNode.AutoCAD
             // Stable wrapper contains user graphics; only its marked child is regenerated.
             public string GeneratedChildHandle { get; set; }
             public string GeneratedStamp { get; set; }
+            public List<ViewLineOverride> LineOverrides { get; set; }=new List<ViewLineOverride>();
+            public int UnmatchedLineOverrides { get; set; }
         }
         internal sealed class Entry
         {

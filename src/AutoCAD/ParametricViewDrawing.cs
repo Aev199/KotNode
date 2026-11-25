@@ -8,6 +8,12 @@ namespace KotNode.AutoCAD
 {
     internal static class ParametricViewDrawing
     {
+        internal const string LineSourceTag="KOTNODE_LINE_SOURCE_1";
+        internal static ParametricProjection.Curve2 Source(Transaction tr,Entity entity)
+        {
+            if(entity==null||entity.ExtensionDictionary.IsNull)return null;
+            return AssemblyDrawing.Read<ParametricProjection.Curve2>((DBDictionary)tr.GetObject(entity.ExtensionDictionary,OpenMode.ForRead),LineSourceTag,tr);
+        }
         static Curve Entity(ParametricProjection.Curve2 c)
         {
             if(!c.Circular)return new Line(new Point3d(c.X0,c.Y0,0),new Point3d(c.X1,c.Y1,0));
@@ -18,14 +24,25 @@ namespace KotNode.AutoCAD
         internal static ObjectId Build(Database db,Transaction tr,AssemblyMark mark,AssemblyViews.ViewData data)
         {
             // Compute and validate everything before adding drawing objects.
-            var result=ParametricProjection.Build(mark,data.Frame,data.IsSection,data.Hidden);
+            var result=ParametricProjection.Build(mark,data.Frame,data.IsSection,true);
+            result.Curves=ViewLineOverrides.Apply(result.Curves,data.LineOverrides,data.Hidden,out var unmatched);
+            data.UnmatchedLineOverrides=unmatched;
             if(result.Curves.Count==0)throw new InvalidOperationException("Параметрическое представление пустое: проверьте направление и секущую плоскость.");
             var table=(BlockTable)tr.GetObject(db.BlockTableId,OpenMode.ForWrite);
             var block=new BlockTableRecord{Name="NA_PARAM_VIEW_"+Guid.NewGuid().ToString("N"),Units=UnitsValue.Millimeters};
             var id=table.Add(block);tr.AddNewlyCreatedDBObject(block,true);
             double scale=data.AnnotationScale>0?data.AnnotationScale:20;
             foreach(var c in result.Curves)
-                using(var curve=Entity(c))AssemblyViews.StoreCurve(block,tr,db,curve,c.Hidden?AssemblyViews.HiddenLayer:c.Cut?AssemblyViews.CutLayer:AssemblyViews.VisibleLayer,c.Hidden?scale:1);
+                using(var curve=Entity(c))
+                {
+                    var curveId=AssemblyViews.StoreCurve(block,tr,db,curve,c.Hidden?AssemblyViews.HiddenLayer:c.Cut?AssemblyViews.CutLayer:AssemblyViews.VisibleLayer,c.Hidden?scale:1);
+                    if(ViewLineOverrides.HasSource(c))
+                    {
+                        var entity=(Entity)tr.GetObject(curveId,OpenMode.ForWrite);
+                        entity.CreateExtensionDictionary();
+                        AssemblyDrawing.Write((DBDictionary)tr.GetObject(entity.ExtensionDictionary,OpenMode.ForRead),LineSourceTag,c,tr);
+                    }
+                }
             if(data.NoHatch)return id;
             int index=0;
             foreach(var area in result.Sections)

@@ -16,6 +16,8 @@ namespace KotNode.Core
             internal Vector3 A,B;
             internal Guid Id;
             internal bool Cut;
+            internal string SourceKey;
+            internal double SourceFrom,SourceTo=1;
             internal Segment(Vector3 a,Vector3 b,Guid id,bool cut=false){A=a;B=b;Id=id;Cut=cut;}
             internal Vector3 At(double t)=>Add(A,Mul(Sub(B,A),t));
         }
@@ -123,15 +125,16 @@ namespace KotNode.Core
             }
             return inside;
         }
-        static void AddEdge(List<Segment> list,Vector3 a,Vector3 b,Guid id,bool section)
+        static void AddEdge(List<Segment> list,Vector3 a,Vector3 b,Guid id,bool section,string key=null,double from=0,double to=1)
         {
+            double t0=0,t1=1;
             if(section)
             {
                 if(a.Z>E&&b.Z>E)return;
-                if(a.Z>E)a=Add(a,Mul(Sub(b,a),a.Z/(a.Z-b.Z)));
-                else if(b.Z>E)b=Add(a,Mul(Sub(b,a),a.Z/(a.Z-b.Z)));
+                if(a.Z>E){t0=a.Z/(a.Z-b.Z);a=Add(a,Mul(Sub(b,a),t0));}
+                else if(b.Z>E){t1=a.Z/(a.Z-b.Z);b=Add(a,Mul(Sub(b,a),t1));}
             }
-            if(Len2(a,b)>E*E)list.Add(new Segment(a,b,id));
+            if(Len2(a,b)>E*E)list.Add(new Segment(a,b,id){SourceKey=key,SourceFrom=from+(to-from)*t0,SourceTo=from+(to-from)*t1});
         }
         static IEnumerable<Segment> CutFace(Face face,Guid id)
         {
@@ -166,7 +169,7 @@ namespace KotNode.Core
         static string Key(Vector3 p)=>Math.Round(p.X/Join).ToString("F0",System.Globalization.CultureInfo.InvariantCulture)+","+Math.Round(p.Y/Join).ToString("F0",System.Globalization.CultureInfo.InvariantCulture);
         static string Key(Segment s)
         {var a=Key(s.A);var b=Key(s.B);return string.CompareOrdinal(a,b)<=0?a+"/"+b:b+"/"+a;}
-        static ParametricProjection.Curve2 Curve(Segment s,bool hidden=false)=>new ParametricProjection.Curve2{X0=s.A.X,Y0=s.A.Y,X1=s.B.X,Y1=s.B.Y,InstanceId=s.Id,Cut=s.Cut,Hidden=hidden};
+        static ParametricProjection.Curve2 Curve(Segment s,bool hidden=false)=>new ParametricProjection.Curve2{X0=s.A.X,Y0=s.A.Y,X1=s.B.X,Y1=s.B.Y,InstanceId=s.Id,Cut=s.Cut,Hidden=hidden,SourceKey=s.SourceKey,SourceFrom=s.SourceFrom,SourceTo=s.SourceTo};
         static double Area(List<Vector3> ring)
         {
             var o=ring[0];double a=0;
@@ -222,6 +225,42 @@ namespace KotNode.Core
                 {double t=((p.X-s.A.X)*r.X+(p.Y-s.A.Y)*r.Y)/len;if(t>0&&t<1)cuts.Add(t);}
         }
         static bool Overlaps(Segment s,Face f)=>Math.Max(s.A.X,s.B.X)>=f.MinX-E&&Math.Min(s.A.X,s.B.X)<=f.MaxX+E&&Math.Max(s.A.Y,s.B.Y)>=f.MinY-E&&Math.Min(s.A.Y,s.B.Y)<=f.MaxY+E;
+        // Stable physical contour roles. Facet count is not identity.
+        static void Rim(PartDefinition p,Profile profile,int ring,int j,out string key,out double from,out double to)
+        {
+            key=null;from=0;to=1;
+            int n=profile.Rings[ring].Count;
+            if(p.Kind==PartKind.RectangularPlate||p.Kind==PartKind.IBeam)
+            {key="edge:"+j;return;}
+            if(p.Kind==PartKind.Pipe||(p.Kind==PartKind.CurvedPlate&&profile.Rings.Count==2))
+            {
+                key="rim:"+ring;
+                from=(double)j/n;to=(double)(j+1)/n;return;
+            }
+            if(p.Kind==PartKind.CurvedPlate)
+            {
+                int outer=Steps(p.CurvedPlate.InnerRadius+p.CurvedPlate.Thickness,p.CurvedPlate.AngleRadians);
+                int inner=Steps(p.CurvedPlate.InnerRadius,p.CurvedPlate.AngleRadians);
+                if(j<outer){key="outer";from=(double)j/outer;to=(double)(j+1)/outer;}
+                else if(j==outer)key="radial-end";
+                else if(j<n-1){key="inner";int k=j-outer-1;from=1-(double)k/inner;to=1-(double)(k+1)/inner;}
+                else key="radial-start";
+            }
+        }
+        static string AxialKey(PartDefinition p,Profile profile,int ring,int j)
+        {
+            if(p.Kind==PartKind.RectangularPlate||p.Kind==PartKind.IBeam)return "vertex:"+j;
+            if(p.Kind==PartKind.CurvedPlate&&profile.Rings.Count==1)
+            {
+                int outer=Steps(p.CurvedPlate.InnerRadius+p.CurvedPlate.Thickness,p.CurvedPlate.AngleRadians);
+                if(j==0)return "outer-start";
+                if(j==outer)return "outer-end";
+                if(j==outer+1)return "inner-end";
+                if(j==profile.Rings[ring].Count-1)return "inner-start";
+            }
+            return null;
+        }
+        static string Source(PartDefinition p,string role)=>role==null?null:"spatial:"+p.Kind+":"+role;
         internal static ParametricProjection.Result Build(AssemblyMark mark,RigidPlacement frame,bool section,bool showHidden)
         {
             mark.Validate();frame.Validate();
@@ -241,15 +280,16 @@ namespace KotNode.Core
                         int next=(j+1)%n;
                         side[j]=new Face(new List<Vector3>{bottom[k][j],bottom[k][next],top[k][next],top[k][j]});
                         own.Add(side[j]);
-                        AddEdge(candidates,bottom[k][j],bottom[k][next],i.Id,section);
-                        AddEdge(candidates,top[k][j],top[k][next],i.Id,section);
+                        Rim(p,profile,k,j,out var rim,out var from,out var to);
+                        AddEdge(candidates,bottom[k][j],bottom[k][next],i.Id,section,Source(p,rim==null?null:"bottom:"+rim),from,to);
+                        AddEdge(candidates,top[k][j],top[k][next],i.Id,section,Source(p,rim==null?null:"top:"+rim),from,to);
                     }
                     for(int j=0;j<n;j++)
                     {
                         var a=side[(j+n-1)%n].Normal;var b=side[j].Normal;
                         double az=a.Z/Math.Sqrt(a.Dot(a)),bz=b.Z/Math.Sqrt(b.Dot(b));
                         if(profile.Sharp[k].Contains(j)||(az> E&&bz<=E)||(bz>E&&az<=E)||(az< -E&&bz>=-E)||(bz< -E&&az>=-E))
-                            AddEdge(candidates,bottom[k][j],top[k][j],i.Id,section);
+                            AddEdge(candidates,bottom[k][j],top[k][j],i.Id,section,Source(p,AxialKey(p,profile,k,j)));
                     }
                 }
                 faces.AddRange(own);
@@ -275,7 +315,7 @@ namespace KotNode.Core
                     var m=s.At((a+b)/2);
                     bool hidden=near.Any(f=>{var z=f.Depth(m);return z.HasValue&&(!section||z.Value<=E)&&z.Value>m.Z+E;});
                     if(hidden&&!showHidden)continue;
-                    var piece=new Segment(s.At(a),s.At(b),s.Id,s.Cut);var key=Key(piece);var c=Curve(piece,hidden);
+                    var piece=new Segment(s.At(a),s.At(b),s.Id,s.Cut){SourceKey=s.SourceKey,SourceFrom=s.SourceFrom+(s.SourceTo-s.SourceFrom)*a,SourceTo=s.SourceFrom+(s.SourceTo-s.SourceFrom)*b};var key=Key(piece);var c=Curve(piece,hidden);
                     if(!unique.TryGetValue(key,out var old)||old.Hidden&&!hidden||old.Hidden==hidden&&c.Cut&&!old.Cut)unique[key]=c;
                 }
             }
