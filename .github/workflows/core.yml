@@ -26,15 +26,28 @@ jobs:
       - name: Build AutoCAD 2021 plugin and run core checks
         shell: pwsh
         run: ./build.ps1
+      - name: Restore previously compiled HLR bridge
+        id: hlr-cache
+        uses: actions/cache@v4
+        with:
+          path: src/NativeHlr/bin/KotNode.HlrBridge.dll
+          key: hlr-win2022-x64-v142-arx2021-v1-${{ hashFiles('src/NativeHlr/Projector.cpp', 'src/NativeHlr/KotNode.HlrBridge.vcxproj', 'build-hlr.ps1', 'ci/get-arx2021.ps1', 'ci/ensure-v142.ps1') }}
       - name: Acquire Autodesk ObjectARX 2021 SDK
+        if: steps.hlr-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: ./ci/get-arx2021.ps1
       - name: Ensure MSVC v142 and C++/CLI
+        if: steps.hlr-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: ./ci/ensure-v142.ps1
       - name: Build native HLR bridge
+        if: steps.hlr-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: ./build-hlr.ps1 -ArxSdk $env:ARX2021
+      - name: Package native bridge
+        shell: pwsh
+        run: |
+          Copy-Item src/NativeHlr/bin/KotNode.HlrBridge.dll plugin -Force -ErrorAction Stop
       - name: Verify complete plugin package
         shell: pwsh
         run: |

@@ -5,6 +5,7 @@
 #include <map>
 #using <mscorlib.dll>
 #using <System.dll>
+#using <System.Core.dll>
 #using <AcDbMgd.dll>
 #define _HLR_SUPPORT_
 #include "dbxHeaders.h"
