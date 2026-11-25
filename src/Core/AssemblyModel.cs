@@ -54,10 +54,87 @@ namespace KotNode.Core
             return rows;
         }
 
+        // Commands validate before mutation; failed edits leave the mark unchanged.
+        public PartInstance AddPart(PartDefinition definition, RigidPlacement placement)
+        {
+            Validate();
+            Guard.Require(definition != null && placement != null, "Не задана деталь или положение.");
+            var part = Json.Copy(definition);
+            var instance = new PartInstance { PartId = part.Id, Placement = Json.Copy(placement) };
+            var draft = Json.Copy(this);
+            draft.Parts.Add(part);
+            draft.Instances.Add(instance);
+            draft.Validate();
+            Parts.Add(part);
+            Instances.Add(instance);
+            return instance;
+        }
+
+        public void SetPlacement(Guid instanceId, RigidPlacement placement)
+        {
+            Validate();
+            var instance = FindInstance(instanceId);
+            Guard.Require(placement != null, "Не задано положение.");
+            placement.Validate();
+            instance.Placement = Json.Copy(placement);
+        }
+
+        public void ReplaceDefinition(Guid partId, PartDefinition replacement)
+        {
+            Validate();
+            Guard.Require(replacement != null && replacement.Id == partId, "Нельзя менять идентификатор детали.");
+            int index = Parts.FindIndex(p => p.Id == partId);
+            Guard.Require(index >= 0, "Деталь не найдена.");
+            var copy = Json.Copy(replacement);
+            var draft = Json.Copy(this);
+            draft.Parts[index] = copy;
+            draft.Validate();
+            Parts[index] = copy;
+        }
+
+        // Detach a single instance; the caller supplies a new position for a specifiable part.
+        public PartDefinition DetachInstance(Guid instanceId, string newPosition)
+        {
+            Validate();
+            var instance = FindInstance(instanceId);
+            var copy = Json.Copy(Parts.Single(p => p.Id == instance.PartId));
+            copy.Id = Guid.NewGuid();
+            copy.Position = newPosition ?? "";
+            var draft = Json.Copy(this);
+            draft.Parts.Add(copy);
+            draft.Instances.Single(i => i.Id == instanceId).PartId = copy.Id;
+            draft.Validate();
+            Parts.Add(copy);
+            instance.PartId = copy.Id;
+            return copy;
+        }
+
+        public void RemoveInstance(Guid instanceId)
+        {
+            Validate();
+            Instances.Remove(FindInstance(instanceId));
+        }
+
+        public void RemoveUnusedDefinition(Guid partId)
+        {
+            Validate();
+            var part = Parts.SingleOrDefault(p => p.Id == partId);
+            Guard.Require(part != null, "Деталь не найдена.");
+            Guard.Require(!Instances.Any(i => i.PartId == partId), "Деталь используется в узле.");
+            Parts.Remove(part);
+        }
+
+        private PartInstance FindInstance(Guid id)
+        {
+            var instance = Instances.SingleOrDefault(i => i.Id == id);
+            Guard.Require(instance != null, "Экземпляр не найден.");
+            return instance;
+        }
+
         public PartInstance CopyInstance(Guid id)
         {
             Validate();
-            var source = Instances.Single(i => i.Id == id);
+            var source = FindInstance(id);
             var copy = Json.Copy(source);
             copy.Id = Guid.NewGuid();
             Instances.Add(copy);
