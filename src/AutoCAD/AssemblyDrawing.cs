@@ -156,6 +156,69 @@ namespace KotNode.AutoCAD
         }
         static Solid3d CircleSolid(double radius,double length)
             =>Extrude(new Circle(Point3d.Origin,Vector3d.ZAxis,radius),length);
+        static Polyline Ring(System.Collections.Generic.IList<KotNode.Core.Point2> points)
+        {
+            var p=new Polyline(points.Count);
+            double area=0;
+            for(int i=0;i<points.Count;i++)
+            {
+                var a=points[i];var b=points[(i+1)%points.Count];
+                area+=a.X*b.Y-a.Y*b.X;
+            }
+            for(int i=0;i<points.Count;i++)
+            {
+                var a=points[area>=0?i:points.Count-1-i];
+                p.AddVertexAt(i,new Point2d(a.X,a.Y),0,0,0);
+            }
+            p.Closed=true;return p;
+        }
+        static Solid3d Polygon(PolygonPlateShape p)
+        {
+            var solid=Extrude(Ring(p.Outer),p.Thickness);
+            try
+            {
+                foreach(var hole in p.Holes)
+                    using(var cut=Extrude(Ring(hole),p.Thickness))
+                        solid.BooleanOperation(BooleanOperationType.BoolSubtract,cut);
+                foreach(var hole in p.RoundHoles)
+                    using(var cut=Extrude(new Circle(new Point3d(hole.Center.X,hole.Center.Y,0),Vector3d.ZAxis,hole.Radius),p.Thickness))
+                        solid.BooleanOperation(BooleanOperationType.BoolSubtract,cut);
+                return solid;
+            }
+            catch {solid.Dispose();throw;}
+        }
+        static Solid3d Curved(CurvedPlateShape p)
+        {
+            double ri=p.InnerRadius,ro=ri+p.Thickness,a=p.AngleRadians;
+            if(Math.Abs(a-2*Math.PI)<1e-10)
+            {
+                var tube=CircleSolid(ro,p.Length);
+                try {using(var cut=CircleSolid(ri,p.Length))tube.BooleanOperation(BooleanOperationType.BoolSubtract,cut);return tube;}
+                catch {tube.Dispose();throw;}
+            }
+            int n=(int)Math.Ceiling(a/(Math.PI/2));
+            double step=a/n;
+            var contour=new Polyline(2*(n+1));
+            for(int i=0;i<=n;i++)
+                contour.AddVertexAt(i,new Point2d(ro*Math.Cos(i*step),ro*Math.Sin(i*step)),i<n?Math.Tan(step/4):0,0,0);
+            for(int i=0;i<=n;i++)
+            {
+                double angle=a-i*step;
+                contour.AddVertexAt(n+1+i,new Point2d(ri*Math.Cos(angle),ri*Math.Sin(angle)),i<n?-Math.Tan(step/4):0,0,0);
+            }
+            contour.Closed=true;
+            return Extrude(contour,p.Length);
+        }
+        static Solid3d Beam(IBeamShape p)
+        {
+            double b=p.Width/2,h=p.Height/2,w=p.WebThickness/2,t=p.FlangeThickness;
+            var points=new[]{new KotNode.Core.Point2(-b,-h),new KotNode.Core.Point2(b,-h),
+                new KotNode.Core.Point2(b,-h+t),new KotNode.Core.Point2(w,-h+t),new KotNode.Core.Point2(w,h-t),
+                new KotNode.Core.Point2(b,h-t),new KotNode.Core.Point2(b,h),new KotNode.Core.Point2(-b,h),
+                new KotNode.Core.Point2(-b,h-t),new KotNode.Core.Point2(-w,h-t),new KotNode.Core.Point2(-w,-h+t),
+                new KotNode.Core.Point2(-b,-h+t)};
+            return Extrude(Ring(points),p.Length);
+        }
         static Solid3d Solid(PartDefinition part)
         {
             part.Validate();
@@ -178,7 +241,10 @@ namespace KotNode.AutoCAD
                 contour.Closed=true;
                 return Extrude(contour,p.Thickness);
             }
-            throw new NotSupportedException("В экспериментальном редакторе пока доступны труба и прямоугольный лист.");
+            if(part.Kind==PartKind.PolygonPlate)return Polygon(part.PolygonPlate);
+            if(part.Kind==PartKind.CurvedPlate)return Curved(part.CurvedPlate);
+            if(part.Kind==PartKind.IBeam)return Beam(part.IBeam);
+            throw new NotSupportedException("Этот тип детали пока не строится в AutoCAD.");
         }
         internal static ObjectId Geometry(Database db,Transaction tr,PartDefinition part)
         {
