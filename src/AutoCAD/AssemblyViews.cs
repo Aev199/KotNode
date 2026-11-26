@@ -16,7 +16,7 @@ namespace KotNode.AutoCAD
     public static class AssemblyViews
     {
         internal const string Key="KOTNODE_VIEW_1";
-        internal const int Revision=14;
+        internal const int Revision=15;
         internal const string VisibleLayer="NA_VISIBLE",HiddenLayer="NA_HIDDEN",CutLayer="NA_CUT",HatchLayer="NA_HATCH";
         static double PaperScale(ViewData d)=>d.AnnotationScale>0?d.AnnotationScale:20;
         static void Layers(Database db,Transaction tr)
@@ -26,9 +26,19 @@ namespace KotNode.AutoCAD
             if(!types.Has(dashed))
             {
                 types.UpgradeOpen();
-                var type=new LinetypeTableRecord{Name=dashed,AsciiDescription="KotNode hidden edges",PatternLength=4,NumDashes=2};
-                type.SetDashLengthAt(0,3);type.SetDashLengthAt(1,-1);
+                var type=new LinetypeTableRecord{Name=dashed,AsciiDescription="KotNode hidden edges",PatternLength=6,NumDashes=2};
+                type.SetDashLengthAt(0,4);type.SetDashLengthAt(1,-2);
                 types.Add(type);tr.AddNewlyCreatedDBObject(type,true);
+            }
+            else
+            {
+                var existing=(LinetypeTableRecord)tr.GetObject(types[dashed],OpenMode.ForRead);
+                if(existing.AsciiDescription=="KotNode hidden edges"&&Math.Abs(existing.PatternLength-4)<1e-6&&existing.NumDashes==2)
+                {
+                    existing.UpgradeOpen();
+                    existing.PatternLength=6;
+                    existing.SetDashLengthAt(0,4);existing.SetDashLengthAt(1,-2);
+                }
             }
             var layers=(LayerTable)tr.GetObject(db.LayerTableId,OpenMode.ForRead);
             foreach(var name in new[]{VisibleLayer,HiddenLayer,CutLayer,HatchLayer})
@@ -460,6 +470,9 @@ namespace KotNode.AutoCAD
             if(!entry.Data.IsSection||entry.Data.FullCut)entry.Data.ParametricPrototype=true;
             var geometry=Build(db,tr,mark,refs,entry.Data);
             AssemblyDrawing.Replace(child,geometry);
+            child.RecordGraphicsModified(true);
+            if(!entry.Reference.IsWriteEnabled)entry.Reference.UpgradeOpen();
+            entry.Reference.RecordGraphicsModified(true);
             entry.Data.GeneratedStamp=ViewShell.Stamp(tr,geometry);
             entry.Data.SourceHash=Signature(mark);entry.Data.GeneratorRevision=Revision;entry.Data.ManualSnapshot=false;
             Save(entry.Reference,tr,entry.Data);
@@ -482,6 +495,7 @@ namespace KotNode.AutoCAD
             var geometry=Build(db,tr,mark,refs,entry.Data);
             var shell=ViewShell.Create(db,tr,geometry,entry.Data);
             AssemblyDrawing.Replace(original,shell);
+            original.RecordGraphicsModified(true);
             entry.Data.SourceHash=Signature(mark);
             entry.Data.GeneratorRevision=Revision;
             Save(original,tr,entry.Data);

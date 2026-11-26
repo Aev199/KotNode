@@ -147,6 +147,67 @@ static class ParametricProjectionTests
         Near(ArcSum(ParametricProjection.Build(longitudinal,spin),50),2*Math.PI,"pipe rotation about its own axis does not alter its shape");
         var touching=Mark();touching.AddPart(Pipe(),At(0,0,0));touching.AddPart(Plate(20,20,10),At(50,-10,10));
         Check(ParametricProjection.Build(touching,At(0,0,0)).Curves.Count>0,"tangent plate contact is supported");
+        // --- Stage 4.1 / Generator 15: 100% spatial SourceKey coverage, chaining, geometric picking, faceted fragments ---
+        var polyMark=Mark();
+        var polyDef=new PartDefinition
+        {
+            Name="Фасонка с отверстиями",Kind=PartKind.PolygonPlate,
+            PolygonPlate=new PolygonPlateShape
+            {
+                Thickness=12,
+                Outer=new List<Point2>{new Point2(0,0),new Point2(200,0),new Point2(200,120),new Point2(80,120),new Point2(80,60),new Point2(0,60)},
+                Holes=new List<List<Point2>>{new List<Point2>{new Point2(110,20),new Point2(160,20),new Point2(160,50),new Point2(110,50)}},
+                RoundHoles=new List<RoundHole>{new RoundHole{Center=new Point2(40,30),Radius=12}}
+            }
+        };
+        polyMark.AddPart(polyDef,At(0,0,-6));
+        var polyTop=ParametricProjection.Build(polyMark,At(0,0,0),false,true);
+        Check(polyTop.Curves.Count>0&&polyTop.Curves.All(ViewLineOverrides.HasSource),"polygon plate with holes has 100% semantic keys");
+        var polyOblique=ParametricProjection.Build(polyMark,oblique,false,true);
+        Check(polyOblique.Curves.Count>0&&polyOblique.Curves.All(ViewLineOverrides.HasSource),"oblique polygon plate has 100% semantic keys");
+        var polyCut=ParametricProjection.Build(polyMark,At(0,0,0),true,true);
+        Check(polyCut.Curves.Count>0&&polyCut.Curves.All(ViewLineOverrides.HasSource),"polygon plate section cut has 100% semantic keys");
+        var obliquePipe=ParametricProjection.Build(longitudinal,oblique,false,true);
+        Check(obliquePipe.Curves.Count>0&&obliquePipe.Curves.All(ViewLineOverrides.HasSource),"oblique pipe including smooth silhouettes has 100% semantic keys");
+        var obliquePipeCut=ParametricProjection.Build(longitudinal,new RigidPlacement{Origin=new Vector3(0,0,100),AxisX=oblique.AxisX,AxisY=oblique.AxisY},true,true);
+        Check(obliquePipeCut.Curves.Count>0&&obliquePipeCut.Curves.All(ViewLineOverrides.HasSource),"oblique pipe section has 100% semantic keys");
+        var curvedMark=Mark();
+        curvedMark.AddPart(new PartDefinition{Name="Накладка",Kind=PartKind.CurvedPlate,CurvedPlate=new CurvedPlateShape{InnerRadius=100,Thickness=12,Length=200,AngleRadians=Math.PI/2}},At(0,0,0));
+        var curvedTop=ParametricProjection.Build(curvedMark,At(0,0,0),false,true);
+        Check(curvedTop.Curves.Count>0&&curvedTop.Curves.All(ViewLineOverrides.HasSource),"curved plate top view has 100% semantic keys");
+        var curvedSide=ParametricProjection.Build(curvedMark,front,false,true);
+        Check(curvedSide.Curves.Count>0&&curvedSide.Curves.All(ViewLineOverrides.HasSource),"curved plate side view has 100% semantic keys");
+        // Chaining faceted curves & geometric picking + Fragment across multiple facets
+        var curvedChains=ViewLineOverrides.Chain(curvedTop.Curves);
+        var outerArcChain=curvedChains.Single(c=>!c.Hidden&&c.SourceKey.EndsWith(":outer")&&c.Segments.Count>2);
+        Check(Math.Abs(outerArcChain.TotalLength-112*Math.PI/2)<0.1,"faceted outer arc merges into one full-length chain");
+        var hitArc=ViewLineOverrides.Pick(curvedChains,112*Math.Cos(Math.PI/4),112*Math.Sin(Math.PI/4),5.0);
+        Check(hitArc!=null&&hitArc.Chain==outerArcChain,"geometric pick hits merged faceted arc chain");
+        var u1=ViewLineOverrides.ParameterAt(outerArcChain,112*Math.Cos(Math.PI/8),112*Math.Sin(Math.PI/8));
+        var u2=ViewLineOverrides.ParameterAt(outerArcChain,112*Math.Cos(3*Math.PI/8),112*Math.Sin(3*Math.PI/8));
+        var facetedPreview=new List<ParametricProjection.Curve2>();
+        var facetedRules=ViewLineOverrides.CreateRangeForChain(outerArcChain,ViewLineMode.Hidden,u1,u2,false,batch,facetedPreview);
+        Check(facetedRules.Count==1&&facetedPreview.Count>=2,"fragment on faceted arc spans multiple segments as single source interval");
+        var afterFacetedHidden=ViewLineOverrides.Apply(curvedTop.Curves,facetedRules,false,out var unmatchedFaceted);
+        Check(unmatchedFaceted==0&&afterFacetedHidden.Any(c=>c.Hidden),"manual hidden fragment on faceted arc is preserved even when showHidden=false");
+        // Resizing curved plate (which changes facet count!) must keep the override matched
+        var resizedCurved=Json.Copy(curvedMark);resizedCurved.Parts[0].CurvedPlate.InnerRadius=160;
+        var resizedCurvedView=ParametricProjection.Build(resizedCurved,At(0,0,0),false,true);
+        var afterResizeFaceted=ViewLineOverrides.Apply(resizedCurvedView.Curves,facetedRules,false,out unmatchedFaceted);
+        Check(unmatchedFaceted==0&&afterResizeFaceted.Any(c=>c.Hidden),"faceted override survives radius change and facet-count change");
+        // Closed faceted loop (round hole) chains into full loop and supports Short/Long wrap-around fragment
+        var holeChains=ViewLineOverrides.Chain(polyTop.Curves);
+        var holeLoop=holeChains.Single(c=>c.SourceKey.Contains("roundhole:0")&&!c.Hidden);
+        Check(holeLoop.Closed&&holeLoop.IsFullLoop&&holeLoop.Segments.Count>=12,"faceted round hole merges into closed full loop");
+        var holeShort=ViewLineOverrides.CreateRangeForChain(holeLoop,ViewLineMode.Suppressed,0.9,0.1,false,batch);
+        Near(holeShort.Sum(r=>r.To-r.From),0.2,"closed faceted loop shorter range wraps seam");
+        var holeLong=ViewLineOverrides.CreateRangeForChain(holeLoop,ViewLineMode.Suppressed,0.9,0.1,true,batch);
+        Near(holeLong.Sum(r=>r.To-r.From),0.8,"closed faceted loop longer range");
+        // Coincident overlapping lines detected together by geometric pick
+        var cA=new ParametricProjection.Curve2{InstanceId=Guid.NewGuid(),SourceKey="k1",X0=0,Y0=0,X1=100,Y1=0,SourceFrom=0,SourceTo=1,Hidden=false};
+        var cB=new ParametricProjection.Curve2{InstanceId=Guid.NewGuid(),SourceKey="k2",X0=0,Y0=0.02,X1=100,Y1=0.02,SourceFrom=0,SourceTo=1,Hidden=false};
+        var overlapHit=ViewLineOverrides.Pick(ViewLineOverrides.Chain(new[]{cA,cB}),50,0.01,5.0);
+        Check(overlapHit!=null&&overlapHit.Coincident.Count==2,"coincident near-overlapping edges grouped on pick");
         Console.WriteLine(checks+" parametric projection checks passed");
     }
     static double Length(ParametricProjection.Curve2 c)=>c.Circular?c.Radius*c.Sweep:Math.Sqrt(Math.Pow(c.X1-c.X0,2)+Math.Pow(c.Y1-c.Y0,2));

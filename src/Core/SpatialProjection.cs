@@ -26,6 +26,8 @@ namespace KotNode.Core
             internal List<List<Vector3>> Rings;
             internal Vector3 Normal,Origin;
             internal double MinX,MaxX,MinY,MaxY;
+            internal string CutKey;
+            internal double CutFrom,CutTo=1;
             internal Face(params List<Vector3>[] rings)
             {
                 Rings=rings.ToList();Origin=rings[0][0];
@@ -160,10 +162,22 @@ namespace KotNode.Core
             v=Mul(v,1/Math.Sqrt(v.Dot(v)));
             Func<Vector3,Vector3> local=p=>P(Sub(p,face.Origin).Dot(u),Sub(p,face.Origin).Dot(v));
             var rings=face.Rings.Select(r=>r.Select(local).ToList()).ToList();
+            var span=Sub(unique.Last(),unique[0]);double totalLen=Math.Sqrt(span.Dot(span));
             for(int i=1;i<unique.Count;i++)
             {
                 var a=unique[i-1];var b=unique[i];var m=local(Mul(Add(a,b),.5));
-                if(Inside(m,rings[0],true)&&!rings.Skip(1).Any(r=>Inside(m,r,false)))yield return new Segment(a,b,id,true);
+                if(Inside(m,rings[0],true)&&!rings.Skip(1).Any(r=>Inside(m,r,false)))
+                {
+                    double u0=0,u1=1;
+                    if(totalLen>E)
+                    {
+                        u0=Math.Max(0,Math.Min(1,Sub(a,unique[0]).Dot(span)/(totalLen*totalLen)));
+                        u1=Math.Max(0,Math.Min(1,Sub(b,unique[0]).Dot(span)/(totalLen*totalLen)));
+                    }
+                    double f0=face.CutFrom+(face.CutTo-face.CutFrom)*u0;
+                    double f1=face.CutFrom+(face.CutTo-face.CutFrom)*u1;
+                    yield return new Segment(a,b,id,true){SourceKey=face.CutKey,SourceFrom=f0,SourceTo=f1};
+                }
             }
         }
         static string Key(Vector3 p)=>Math.Round(p.X/Join).ToString("F0",System.Globalization.CultureInfo.InvariantCulture)+","+Math.Round(p.Y/Join).ToString("F0",System.Globalization.CultureInfo.InvariantCulture);
@@ -176,31 +190,47 @@ namespace KotNode.Core
             for(int i=0;i<ring.Count;i++)a+=Cross(Sub(ring[i],o),Sub(ring[(i+1)%ring.Count],o));
             return Math.Abs(a)/2;
         }
-        static void Sections(List<Segment> segments,Guid id,ParametricProjection.Result result,List<Face> faces,List<Segment> candidates)
+        static void Sections(List<Segment> segments,Guid id,PartDefinition part,ParametricProjection.Result result,List<Face> faces,List<Segment> candidates)
         {
             var pending=segments.GroupBy(Key).Select(g=>g.First()).ToList();
-            var rings=new List<List<Vector3>>();
+            var rings=new List<Tuple<List<Vector3>,List<Segment>>>();
             while(pending.Count>0)
             {
-                var s=pending[0];pending.RemoveAt(0);var ring=new List<Vector3>{s.A,s.B};
+                var s=pending[0];pending.RemoveAt(0);
+                var ring=new List<Vector3>{s.A,s.B};
+                var chain=new List<Segment>{s};
                 while(Dist2(ring[0],ring.Last())>Join*Join)
                 {
                     int k=pending.FindIndex(e=>Dist2(e.A,ring.Last())<=Join*Join||Dist2(e.B,ring.Last())<=Join*Join);
                     if(k<0)throw new InvalidDataException("Не удалось замкнуть пространственный контур разреза.");
-                    var e=pending[k];pending.RemoveAt(k);ring.Add(Dist2(e.A,ring.Last())<=Join*Join?e.B:e.A);
+                    var e=pending[k];pending.RemoveAt(k);
+                    bool direct=Dist2(e.A,ring.Last())<=Join*Join;
+                    var oriented=direct
+                        ? new Segment(e.A,e.B,e.Id,true){SourceKey=e.SourceKey,SourceFrom=e.SourceFrom,SourceTo=e.SourceTo}
+                        : new Segment(e.B,e.A,e.Id,true){SourceKey=e.SourceKey,SourceFrom=e.SourceTo,SourceTo=e.SourceFrom};
+                    ring.Add(oriented.B);
+                    chain.Add(oriented);
                 }
                 ring.RemoveAt(ring.Count-1);
-                if(ring.Count>=3&&Area(ring)>Join*Join)rings.Add(ring);
+                if(ring.Count>=3&&Area(ring)>Join*Join)rings.Add(Tuple.Create(ring,chain));
             }
-            var ordered=rings.OrderByDescending(Area).ToList();
+            var ordered=rings.OrderByDescending(r=>Area(r.Item1)).ToList();
             var parent=new int[ordered.Count];var depth=new int[ordered.Count];
             var areas=new Dictionary<int,ParametricProjection.SectionArea>();
             for(int i=0;i<ordered.Count;i++)
             {
                 parent[i]=-1;
-                for(int j=i-1;j>=0;j--)if(Inside(ordered[i][0],ordered[j],false)){parent[i]=j;break;}
+                for(int j=i-1;j>=0;j--)if(Inside(ordered[i].Item1[0],ordered[j].Item1,false)){parent[i]=j;break;}
                 depth[i]=parent[i]<0?0:depth[parent[i]]+1;
-                var ring=ordered[i];var edges=Enumerable.Range(0,ring.Count).Select(k=>new Segment(ring[k],ring[(k+1)%ring.Count],id,true)).ToList();
+                var ring=ordered[i].Item1;var srcChain=ordered[i].Item2;
+                var edges=Enumerable.Range(0,ring.Count).Select(k=>{
+                    var orig=k<srcChain.Count?srcChain[k]:null;
+                    string sk=orig!=null&&!string.IsNullOrEmpty(orig.SourceKey)?orig.SourceKey:Source(part,"cut:loop:"+depth[i]+":"+i+":"+k);
+                    double sf=orig!=null&&!string.IsNullOrEmpty(orig.SourceKey)?orig.SourceFrom:0;
+                    double st=orig!=null&&!string.IsNullOrEmpty(orig.SourceKey)?orig.SourceTo:1;
+                    if(Math.Abs(st-sf)<=1e-10){sf=0;st=1;}
+                    return new Segment(ring[k],ring[(k+1)%ring.Count],id,true){SourceKey=sk,SourceFrom=sf,SourceTo=st};
+                }).ToList();
                 candidates.AddRange(edges);
                 if(depth[i]%2==0)
                 {
@@ -245,11 +275,43 @@ namespace KotNode.Core
                 else if(j==outer)key="radial-end";
                 else if(j<n-1){key="inner";int k=j-outer-1;from=1-(double)k/inner;to=1-(double)(k+1)/inner;}
                 else key="radial-start";
+                return;
+            }
+            if(p.Kind==PartKind.PolygonPlate)
+            {
+                if(ring==0){key="outer:"+j;return;}
+                int polyHoles=p.PolygonPlate.Holes.Count;
+                if(ring<=polyHoles){key="hole:"+(ring-1)+":"+j;return;}
+                int roundHole=ring-1-polyHoles;
+                key="roundhole:"+roundHole;
+                from=(double)j/n;to=(double)(j+1)/n;
             }
         }
-        static string AxialKey(PartDefinition p,Profile profile,int ring,int j)
+        static string SideTag(Vector3 bottomPt,Vector3 topPt,Vector3 bottomCenter,Vector3 topCenter,int fallbackIndex)
+        {
+            var axis=Sub(topCenter,bottomCenter);
+            double axLen=Math.Sqrt(axis.X*axis.X+axis.Y*axis.Y);
+            if(axLen>E)
+            {
+                double px=-axis.Y/axLen,py=axis.X/axLen;
+                var mid=Mul(Add(bottomPt,topPt),.5);
+                var midAxis=Mul(Add(bottomCenter,topCenter),.5);
+                double sideVal=(mid.X-midAxis.X)*px+(mid.Y-midAxis.Y)*py;
+                return sideVal>=0?"pos":"neg";
+            }
+            return fallbackIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+        static Vector3 RingCenter(List<Vector3> ring)
+        {
+            double x=0,y=0,z=0;
+            for(int i=0;i<ring.Count;i++){x+=ring[i].X;y+=ring[i].Y;z+=ring[i].Z;}
+            return new Vector3(x/ring.Count,y/ring.Count,z/ring.Count);
+        }
+        static string AxialKey(PartDefinition p,Profile profile,int ring,int j,Vector3 bottomPt,Vector3 topPt,Vector3 bottomCenter,Vector3 topCenter)
         {
             if(p.Kind==PartKind.RectangularPlate||p.Kind==PartKind.IBeam)return "vertex:"+j;
+            if(p.Kind==PartKind.Pipe||(p.Kind==PartKind.CurvedPlate&&profile.Rings.Count==2))
+                return "sil:"+ring+":"+SideTag(bottomPt,topPt,bottomCenter,topCenter,j);
             if(p.Kind==PartKind.CurvedPlate&&profile.Rings.Count==1)
             {
                 int outer=Steps(p.CurvedPlate.InnerRadius+p.CurvedPlate.Thickness,p.CurvedPlate.AngleRadians);
@@ -257,8 +319,18 @@ namespace KotNode.Core
                 if(j==outer)return "outer-end";
                 if(j==outer+1)return "inner-end";
                 if(j==profile.Rings[ring].Count-1)return "inner-start";
+                string arcRole=j<outer?"outer":"inner";
+                return "sil:"+arcRole+":"+SideTag(bottomPt,topPt,bottomCenter,topCenter,j);
             }
-            return null;
+            if(p.Kind==PartKind.PolygonPlate)
+            {
+                if(ring==0)return "outer-v:"+j;
+                int polyHoles=p.PolygonPlate.Holes.Count;
+                if(ring<=polyHoles)return "hole-v:"+(ring-1)+":"+j;
+                int roundHole=ring-1-polyHoles;
+                return "roundhole-sil:"+roundHole+":"+SideTag(bottomPt,topPt,bottomCenter,topCenter,j);
+            }
+            return "axial:"+ring+":"+j;
         }
         static string Source(PartDefinition p,string role)=>role==null?null:"spatial:"+p.Kind+":"+role;
         internal static ParametricProjection.Result Build(AssemblyMark mark,RigidPlacement frame,bool section,bool showHidden)
@@ -271,16 +343,22 @@ namespace KotNode.Core
                 Func<Vector3,double,Vector3> world=(v,z)=>View(i.Placement.ToWorld(new Vector3(v.X,v.Y,z)),frame);
                 var bottom=profile.Rings.Select(r=>r.Select(v=>world(v,0)).ToList()).ToArray();
                 var top=profile.Rings.Select(r=>r.Select(v=>world(v,profile.Length)).ToList()).ToArray();
-                var own=new List<Face>{new Face(bottom),new Face(top)};
+                var own=new List<Face>{
+                    new Face(bottom){CutKey=Source(p,"cut:bottom")},
+                    new Face(top){CutKey=Source(p,"cut:top")}};
                 for(int k=0;k<bottom.Length;k++)
                 {
                     int n=bottom[k].Count;var side=new Face[n];
+                    var bCenter=RingCenter(bottom[k]);var tCenter=RingCenter(top[k]);
                     for(int j=0;j<n;j++)
                     {
                         int next=(j+1)%n;
-                        side[j]=new Face(new List<Vector3>{bottom[k][j],bottom[k][next],top[k][next],top[k][j]});
-                        own.Add(side[j]);
                         Rim(p,profile,k,j,out var rim,out var from,out var to);
+                        side[j]=new Face(new List<Vector3>{bottom[k][j],bottom[k][next],top[k][next],top[k][j]})
+                        {
+                            CutKey=Source(p,rim==null?null:"cut:side:"+rim),CutFrom=from,CutTo=to
+                        };
+                        own.Add(side[j]);
                         AddEdge(candidates,bottom[k][j],bottom[k][next],i.Id,section,Source(p,rim==null?null:"bottom:"+rim),from,to);
                         AddEdge(candidates,top[k][j],top[k][next],i.Id,section,Source(p,rim==null?null:"top:"+rim),from,to);
                     }
@@ -289,13 +367,13 @@ namespace KotNode.Core
                         var a=side[(j+n-1)%n].Normal;var b=side[j].Normal;
                         double az=a.Z/Math.Sqrt(a.Dot(a)),bz=b.Z/Math.Sqrt(b.Dot(b));
                         if(profile.Sharp[k].Contains(j)||(az> E&&bz<=E)||(bz>E&&az<=E)||(az< -E&&bz>=-E)||(bz< -E&&az>=-E))
-                            AddEdge(candidates,bottom[k][j],top[k][j],i.Id,section,Source(p,AxialKey(p,profile,k,j)));
+                            AddEdge(candidates,bottom[k][j],top[k][j],i.Id,section,Source(p,AxialKey(p,profile,k,j,bottom[k][j],top[k][j],bCenter,tCenter)));
                     }
                 }
                 faces.AddRange(own);
                 var all=bottom.Concat(top).SelectMany(r=>r).ToList();
                 if(section&&all.Min(v=>v.Z)<-E&&all.Max(v=>v.Z)>E)
-                    Sections(own.SelectMany(f=>CutFace(f,i.Id)).ToList(),i.Id,result,faces,candidates);
+                    Sections(own.SelectMany(f=>CutFace(f,i.Id)).ToList(),i.Id,p,result,faces,candidates);
             }
             var unique=new Dictionary<string,ParametricProjection.Curve2>();
             foreach(var s in candidates)

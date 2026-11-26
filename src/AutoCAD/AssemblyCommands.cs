@@ -10,6 +10,7 @@ using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.Windows;
 using KotNode.Core;
+using AcGi=Autodesk.AutoCAD.GraphicsInterface;
 using ModelJson=KotNode.Core.Json;
 using AcApp=Autodesk.AutoCAD.ApplicationServices.Application;
 [assembly: CommandClass(typeof(KotNode.AutoCAD.AssemblyCommands))]
@@ -19,9 +20,7 @@ namespace KotNode.AutoCAD
     public sealed class AssemblyCommands
     {
         static PaletteSet palette;
-        static System.Windows.Forms.TreeView tree;
-        static Label treeStatus;
-        static Document treeDocument;
+        static ConstructorPanel constructorPanel;
         static Document watchedDocument;
         static void Run(string command,Action<Document,Transaction> action)
         {
@@ -37,6 +36,7 @@ namespace KotNode.AutoCAD
                     action(doc,tr);
                     tr.Commit();
                 }
+                doc.TransactionManager.QueueForGraphicsFlush();
                 doc.Editor.Regen();
                 RefreshTree(doc);
             }
@@ -559,87 +559,294 @@ namespace KotNode.AutoCAD
             AssemblyViews.Rebuild(doc.Database,tr,m,refs,entry);
             AssemblyDrawing.Save(doc.Database,tr,m);
         });
-        [CommandMethod("NALINEEDIT",CommandFlags.Modal)]
-        public void EditLines()=>Run("NALINEEDIT",(doc,tr)=>{
-            var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
-            var entries=AssemblyViews.Find(doc.Database,tr,m);
-            var ed=doc.Editor;var signature=AssemblyViews.Signature(m);
-            var action=new PromptKeywordOptions("\nЛинии [Visible/Hidden/Suppress/Auto] <Hidden>: "){AllowNone=true};
-            foreach(var k in new[]{"Visible","Hidden","Suppress","Auto"})action.Keywords.Add(k);
-            action.Keywords.Default="Hidden";
-            var answer=ed.GetKeywords(action);
-            if(answer.Status!=PromptStatus.OK&&answer.Status!=PromptStatus.None)return;
-            var mode=answer.StringResult=="Visible"?ViewLineMode.Visible:answer.StringResult=="Suppress"?ViewLineMode.Suppressed:answer.StringResult=="Auto"?ViewLineMode.Auto:ViewLineMode.Hidden;
-            var scope=new PromptKeywordOptions("\nОбласть [Segment/Fragment/Edge] <Segment>: "){AllowNone=true};
-            foreach(var k in new[]{"Segment","Fragment","Edge"})scope.Keywords.Add(k);
-            scope.Keywords.Default="Segment";
-            var chosen=ed.GetKeywords(scope);
-            if(chosen.Status!=PromptStatus.OK&&chosen.Status!=PromptStatus.None)return;
-            bool whole=chosen.StringResult=="Edge",partial=chosen.StringResult=="Fragment";
-            var batch=Guid.NewGuid();var rules=new List<ViewLineOverride>();var seen=new HashSet<ObjectId>();
-            AssemblyViews.Entry selected=null;BlockReference child=null;
-            while(true)
+        sealed class EditableViewCache
+        {
+            public Guid Id;
+            public string Name;
+            public bool ModelStale;
+            public Matrix3d ToWorld;
+            public Matrix3d ToLocal;
+            public List<CurveChain> Chains;
+        }
+        sealed class LineEditStep
+        {
+            public List<ViewLineOverride> Rules=new List<ViewLineOverride>();
+            public List<AcGi.Drawable> Transients=new List<AcGi.Drawable>();
+        }
+        static string ModeLabel(ViewLineMode mode)=>mode==ViewLineMode.Visible?"Видимая":mode==ViewLineMode.Hidden?"Скрытая":mode==ViewLineMode.Suppressed?"Удалить":"Авто";
+        static string ScopeLabel(bool whole,bool partial)=>whole?"Кромка":partial?"Участок":"Сегмент";
+        static short ModeColor(ViewLineMode mode)=>mode==ViewLineMode.Visible?(short)3:mode==ViewLineMode.Hidden?(short)2:mode==ViewLineMode.Suppressed?(short)1:(short)4;
+        static List<AcGi.Drawable> AddPreviewTransients(IEnumerable<ParametricProjection.Curve2> curves,Matrix3d toWorld,ViewLineMode mode)
+        {
+            var added=new List<AcGi.Drawable>();
+            var tm=AcGi.TransientManager.CurrentTransientManager;
+            if(tm==null)return added;
+            short color=ModeColor(mode);
+            var vps=new IntegerCollection();
+            foreach(var c in curves)
             {
-                var opt=new PromptNestedEntityOptions("\nВыберите линию вида (Enter — применить, Esc — отменить): "){AllowNone=true};
-                var hit=ed.GetNestedEntity(opt);
-                if(hit.Status==PromptStatus.None)break;
-                if(hit.Status!=PromptStatus.OK)return;
-                var containers=hit.GetContainers()??new ObjectId[0];
-                var entry=entries.SingleOrDefault(e=>containers.Contains(e.Reference.ObjectId));
-                if(entry==null||entry.Data.ManualSnapshot||string.IsNullOrEmpty(entry.Data.GeneratedChildHandle))
-                {ed.WriteMessage("\nВыберите линию параметрического вида нового формата.");continue;}
-                if(selected!=null&&selected.Data.Id!=entry.Data.Id)
-                {ed.WriteMessage("\nЗа одну операцию корректируется только один вид.");continue;}
-                if(AssemblyViews.IsStale(entry.Data,signature))
-                {ed.WriteMessage("\nСначала обновите вид (NAUPDATEVIEW).");continue;}
-                var target=child??ViewShell.RequireUnchanged(tr,entry);
-                var entity=tr.GetObject(hit.ObjectId,OpenMode.ForRead) as Entity;
-                if(entity==null||entity.OwnerId!=target.BlockTableRecord||!containers.Contains(target.ObjectId))
-                {ed.WriteMessage("\nВыберите именно автоматически построенную линию.");continue;}
-                var source=ParametricViewDrawing.Source(tr,entity);
-                if(!ViewLineOverrides.HasSource(source))
-                {ed.WriteMessage("\nДля этой линии пока нет устойчивой кромки.");continue;}
-                if(partial)
+                try
                 {
-                    var first=ed.GetPoint("\nПервая граница участка на выбранной линии: ");
-                    if(first.Status!=PromptStatus.OK)return;
-                    var second=ed.GetPoint("\nВторая граница участка на выбранной линии: ");
-                    if(second.Status!=PromptStatus.OK)return;
-                    var toLocal=entry.Reference.BlockTransform.Inverse();
-                    var u=first.Value.TransformBy(ed.CurrentUserCoordinateSystem).TransformBy(toLocal);
-                    var v=second.Value.TransformBy(ed.CurrentUserCoordinateSystem).TransformBy(toLocal);
-                    bool longer=false;
-                    if(source.Circular&&source.Sweep>=2*Math.PI-1e-10)
-                    {
-                        var arc=new PromptKeywordOptions("\nДуга между точками [Short/Long] <Short>: "){AllowNone=true};
-                        arc.Keywords.Add("Short");arc.Keywords.Add("Long");arc.Keywords.Default="Short";
-                        var pick=ed.GetKeywords(arc);
-                        if(pick.Status!=PromptStatus.OK&&pick.Status!=PromptStatus.None)return;
-                        longer=pick.StringResult=="Long";
-                    }
-                    try
-                    {
-                        var a=ViewLineOverrides.ParameterAt(source,u.X,u.Y);
-                        var b=ViewLineOverrides.ParameterAt(source,v.X,v.Y);
-                        rules.AddRange(ViewLineOverrides.CreateRange(source,mode,a,b,longer,batch));
-                    }
-                    catch(System.IO.InvalidDataException ex){ed.WriteMessage("\n"+ex.Message);continue;}
+                    var d=ParametricViewDrawing.CreateEntity(c);
+                    d.TransformBy(toWorld);
+                    d.ColorIndex=color;
+                    d.LineWeight=LineWeight.LineWeight050;
+                    tm.AddTransient(d,AcGi.TransientDrawingMode.DirectTopmost,128,vps);
+                    added.Add(d);
                 }
-                else
-                {
-                    if(!seen.Add(hit.ObjectId))continue;
-                    rules.Add(ViewLineOverrides.Create(source,mode,whole,batch));
-                }
-                selected=entry;child=target;
-                ed.WriteMessage("\nПодготовлено корректировок: "+rules.Count);
+                catch { }
             }
-            if(selected==null||rules.Count==0)return;
-            if(selected.Data.LineOverrides==null)selected.Data.LineOverrides=new List<ViewLineOverride>();
-            selected.Data.LineOverrides.AddRange(rules);
-            AssemblyViews.Rebuild(doc.Database,tr,m,refs,selected);
-            AssemblyDrawing.Save(doc.Database,tr,m);
-            ed.WriteMessage("\nКорректировки сохранены: "+rules.Count+"; без соответствия: "+selected.Data.UnmatchedLineOverrides);
-        });
+            return added;
+        }
+        static void ClearTransients(List<AcGi.Drawable> drawables)
+        {
+            var tm=AcGi.TransientManager.CurrentTransientManager;
+            var vps=new IntegerCollection();
+            foreach(var d in drawables)
+            {
+                try {tm?.EraseTransient(d,vps);}catch { }
+                try {d.Dispose();}catch { }
+            }
+            drawables.Clear();
+        }
+        static double PickTolerance()
+        {
+            try
+            {
+                double viewSize=Convert.ToDouble(AcApp.GetSystemVariable("VIEWSIZE"));
+                if(viewSize>0&&!double.IsNaN(viewSize)&&!double.IsInfinity(viewSize))
+                    return Math.Max(2.0,viewSize*0.018);
+            }
+            catch { }
+            return 15.0;
+        }
+        [CommandMethod("NALINEEDIT",CommandFlags.Modal)]
+        public void EditLines()
+        {
+            Diagnostics.Begin("NALINEEDIT");
+            var doc=AcApp.DocumentManager.MdiActiveDocument;
+            if(doc==null)return;
+            var ed=doc.Editor;
+            var steps=new List<LineEditStep>();
+            var activeTemp=new List<AcGi.Drawable>();
+            try
+            {
+                if(!doc.Database.TileMode||doc.Database.Insunits!=UnitsValue.Millimeters)
+                    throw new InvalidOperationException("Откройте пространство модели (TILEMODE=1), единицы DWG — миллиметры (INSUNITS=4).");
+
+                // Phase 1: short read/auto-upgrade transaction (closed BEFORE interactive prompts).
+                var cache=new List<EditableViewCache>();
+                bool upgradedAny=false;
+                using(var tr=doc.Database.TransactionManager.StartTransaction())
+                {
+                    var m=Need(doc,tr);
+                    var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
+                    var entries=AssemblyViews.Find(doc.Database,tr,m);
+                    var signature=AssemblyViews.Signature(m);
+                    foreach(var entry in entries)
+                    {
+                        if(entry.Data.ManualSnapshot||string.IsNullOrEmpty(entry.Data.GeneratedChildHandle))continue;
+                        bool modelStale=entry.Data.SourceHash!=signature;
+                        if(!modelStale&&entry.Data.GeneratorRevision!=AssemblyViews.Revision)
+                        {
+                            try
+                            {
+                                AssemblyViews.Rebuild(doc.Database,tr,m,refs,entry);
+                                upgradedAny=true;
+                            }
+                            catch(System.Exception ex)
+                            {
+                                ed.WriteMessage("\nВид «"+entry.Data.Name+"» не обновлён автоматически: "+ex.Message);
+                                continue;
+                            }
+                        }
+                        var world=entry.Reference.BlockTransform;
+                        var chains=modelStale?new List<CurveChain>():ParametricViewDrawing.ComputeChains(m,entry.Data);
+                        cache.Add(new EditableViewCache
+                        {
+                            Id=entry.Data.Id,Name=entry.Data.Name,ModelStale=modelStale,
+                            ToWorld=world,ToLocal=world.Inverse(),Chains=chains
+                        });
+                    }
+                    if(upgradedAny)AssemblyDrawing.Save(doc.Database,tr,m);
+                    tr.Commit();
+                }
+                if(upgradedAny)
+                {
+                    doc.TransactionManager.QueueForGraphicsFlush();
+                    ed.Regen();
+                    RefreshTree(doc);
+                }
+                if(cache.Count==0)
+                {
+                    ed.WriteMessage("\nНет параметрических видов нового формата. Создайте вид (NAVIEW/NASECTION) или переведите старый (NAMIGRATEVIEW).");
+                    return;
+                }
+
+                // Phase 2: transaction-free geometric picking with live TransientManager highlight.
+                var action=new PromptKeywordOptions("\nРежим линий [Visible/Hidden/Suppress/Auto] <Hidden>: "){AllowNone=true};
+                foreach(var k in new[]{"Visible","Hidden","Suppress","Auto"})action.Keywords.Add(k);
+                action.Keywords.Default="Hidden";
+                var answer=ed.GetKeywords(action);
+                if(answer.Status!=PromptStatus.OK&&answer.Status!=PromptStatus.None)return;
+                var mode=answer.StringResult=="Visible"?ViewLineMode.Visible:answer.StringResult=="Suppress"?ViewLineMode.Suppressed:answer.StringResult=="Auto"?ViewLineMode.Auto:ViewLineMode.Hidden;
+
+                var scope=new PromptKeywordOptions("\nОбласть [Segment/Fragment/Edge] <Segment>: "){AllowNone=true};
+                foreach(var k in new[]{"Segment","Fragment","Edge"})scope.Keywords.Add(k);
+                scope.Keywords.Default="Segment";
+                var chosen=ed.GetKeywords(scope);
+                if(chosen.Status!=PromptStatus.OK&&chosen.Status!=PromptStatus.None)return;
+                bool whole=chosen.StringResult=="Edge",partial=chosen.StringResult=="Fragment";
+
+                var batch=Guid.NewGuid();
+                EditableViewCache selected=null;
+                while(true)
+                {
+                    var prompt="\n["+ModeLabel(mode)+" | "+ScopeLabel(whole,partial)+"] Укажите линию вида (Enter — применить, Esc — отменить) [Visible/Hidden/Suppress/Auto/Segment/Fragment/Edge/Undo]: ";
+                    var opt=new PromptPointOptions(prompt){AllowNone=true};
+                    foreach(var k in new[]{"Visible","Hidden","Suppress","Auto","Segment","Fragment","Edge","Undo"})opt.Keywords.Add(k);
+                    var hitPt=ed.GetPoint(opt);
+                    if(hitPt.Status==PromptStatus.None)break;
+                    if(hitPt.Status==PromptStatus.Keyword)
+                    {
+                        switch(hitPt.StringResult)
+                        {
+                            case "Visible": mode=ViewLineMode.Visible;break;
+                            case "Hidden": mode=ViewLineMode.Hidden;break;
+                            case "Suppress": mode=ViewLineMode.Suppressed;break;
+                            case "Auto": mode=ViewLineMode.Auto;break;
+                            case "Segment": whole=false;partial=false;break;
+                            case "Fragment": whole=false;partial=true;break;
+                            case "Edge": whole=true;partial=false;break;
+                            case "Undo":
+                                if(steps.Count>0)
+                                {
+                                    var last=steps[steps.Count-1];
+                                    ClearTransients(last.Transients);
+                                    steps.RemoveAt(steps.Count-1);
+                                    if(steps.Count==0)selected=null;
+                                    ed.WriteMessage("\nПоследний выбор отменён. Подготовлено шагов: "+steps.Count);
+                                }
+                                else ed.WriteMessage("\nНет шагов для отмены.");
+                                break;
+                        }
+                        continue;
+                    }
+                    if(hitPt.Status!=PromptStatus.OK)return;
+
+                    var worldPt=hitPt.Value.TransformBy(ed.CurrentUserCoordinateSystem);
+                    double tol=PickTolerance();
+                    EditableViewCache hitView=null;
+                    PickHit bestHit=null;
+                    foreach(var v in cache)
+                    {
+                        if(selected!=null&&v.Id!=selected.Id)continue;
+                        if(v.ModelStale)continue;
+                        var local=worldPt.TransformBy(v.ToLocal);
+                        var candidate=ViewLineOverrides.Pick(v.Chains,local.X,local.Y,tol);
+                        if(candidate!=null&&(bestHit==null||candidate.Distance<bestHit.Distance))
+                        {
+                            bestHit=candidate;hitView=v;
+                        }
+                    }
+                    if(bestHit==null)
+                    {
+                        if(selected==null&&cache.Any(v=>v.ModelStale))
+                            ed.WriteMessage("\nЛиния не найдена. Если нужный вид устарел после изменения модели, сначала выполните NAUPDATEVIEW.");
+                        else if(selected!=null)
+                            ed.WriteMessage("\nРядом с точкой нет линий вида «"+selected.Name+"» (за одну операцию редактируется один вид).");
+                        else
+                            ed.WriteMessage("\nРядом с указанной точкой не найдено линий параметрического вида. Кликните ближе к линии.");
+                        continue;
+                    }
+
+                    var step=new LineEditStep();
+                    var previewCurves=new List<ParametricProjection.Curve2>();
+                    if(partial)
+                    {
+                        activeTemp.AddRange(AddPreviewTransients(bestHit.Chain.Segments,hitView.ToWorld,mode));
+                        var first=ed.GetPoint("\nПервая граница участка на выбранной линии: ");
+                        if(first.Status!=PromptStatus.OK){ClearTransients(activeTemp);return;}
+                        var second=ed.GetPoint(new PromptPointOptions("\nВторая граница участка на выбранной линии: "){UseBasePoint=true,BasePoint=first.Value});
+                        if(second.Status!=PromptStatus.OK){ClearTransients(activeTemp);return;}
+                        var u=first.Value.TransformBy(ed.CurrentUserCoordinateSystem).TransformBy(hitView.ToLocal);
+                        var v=second.Value.TransformBy(ed.CurrentUserCoordinateSystem).TransformBy(hitView.ToLocal);
+                        bool longer=false;
+                        if(bestHit.Chain.IsFullLoop)
+                        {
+                            var arc=new PromptKeywordOptions("\nДуга между точками [Short/Long] <Short>: "){AllowNone=true};
+                            arc.Keywords.Add("Short");arc.Keywords.Add("Long");arc.Keywords.Default="Short";
+                            var pick=ed.GetKeywords(arc);
+                            if(pick.Status!=PromptStatus.OK&&pick.Status!=PromptStatus.None){ClearTransients(activeTemp);return;}
+                            longer=pick.StringResult=="Long";
+                        }
+                        ClearTransients(activeTemp);
+                        try
+                        {
+                            foreach(var ch in bestHit.Coincident)
+                            {
+                                var a=ViewLineOverrides.ParameterAt(ch,u.X,u.Y);
+                                var b=ViewLineOverrides.ParameterAt(ch,v.X,v.Y);
+                                step.Rules.AddRange(ViewLineOverrides.CreateRangeForChain(ch,mode,a,b,longer,batch,ch==bestHit.Chain?previewCurves:null));
+                            }
+                        }
+                        catch(System.IO.InvalidDataException ex){ed.WriteMessage("\n"+ex.Message);continue;}
+                    }
+                    else if(whole)
+                    {
+                        var targets=bestHit.Coincident;
+                        foreach(var ch in targets)
+                            step.Rules.AddRange(ViewLineOverrides.CreateForChain(ch,mode,true,batch));
+                        foreach(var c in hitView.Chains.Where(x=>targets.Any(t=>t.InstanceId==x.InstanceId&&t.SourceKey==x.SourceKey)))
+                            previewCurves.AddRange(c.Segments);
+                    }
+                    else
+                    {
+                        foreach(var ch in bestHit.Coincident)
+                            step.Rules.AddRange(ViewLineOverrides.CreateForChain(ch,mode,false,batch,ch==bestHit.Chain?previewCurves:null));
+                    }
+                    step.Transients.AddRange(AddPreviewTransients(previewCurves,hitView.ToWorld,mode));
+                    steps.Add(step);
+                    selected=hitView;
+                    int totalRules=steps.Sum(s=>s.Rules.Count);
+                    string overlapNote=bestHit.Coincident.Count>1?" (совпало линий: "+bestHit.Coincident.Count+")":"";
+                    ed.WriteMessage("\n["+ModeLabel(mode)+" | "+ScopeLabel(whole,partial)+"] Добавлено"+overlapNote+". Всего корректировок: "+totalRules);
+                }
+
+                var allRules=steps.SelectMany(s=>s.Rules).ToList();
+                if(selected==null||allRules.Count==0)return;
+
+                // Phase 3: atomic commit transaction.
+                int unmatched;
+                using(var tr=doc.Database.TransactionManager.StartTransaction())
+                {
+                    var m=Need(doc,tr);
+                    var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
+                    var entry=AssemblyViews.Find(doc.Database,tr,m).SingleOrDefault(e=>e.Data.Id==selected.Id);
+                    if(entry==null)throw new InvalidOperationException("Представление не найдено.");
+                    if(entry.Data.LineOverrides==null)entry.Data.LineOverrides=new List<ViewLineOverride>();
+                    entry.Data.LineOverrides.AddRange(allRules);
+                    AssemblyViews.Rebuild(doc.Database,tr,m,refs,entry);
+                    AssemblyDrawing.Save(doc.Database,tr,m);
+                    unmatched=entry.Data.UnmatchedLineOverrides;
+                    tr.Commit();
+                }
+                doc.TransactionManager.QueueForGraphicsFlush();
+                ed.Regen();
+                RefreshTree(doc);
+                ed.WriteMessage("\nКорректировки применены ("+allRules.Count+"); без соответствия: "+unmatched);
+            }
+            catch(System.Exception ex)
+            {
+                var log=Diagnostics.Write(ex);
+                ed.WriteMessage("\nКонструктор: "+ex.Message+"\nЖурнал: "+log);
+            }
+            finally
+            {
+                ClearTransients(activeTemp);
+                foreach(var s in steps)ClearTransients(s.Transients);
+            }
+        }
         [CommandMethod("NALINERESET",CommandFlags.Modal)]
         public void ResetLines()=>Run("NALINERESET",(doc,tr)=>{
             var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
@@ -710,65 +917,8 @@ namespace KotNode.AutoCAD
         });
         static void RefreshTree(Document doc)
         {
-            if(tree==null)return;
-            try
-            {
-                tree.BeginUpdate();
-                string previous=treeDocument==doc?tree.SelectedNode?.Tag as string:null;
-                tree.Nodes.Clear();treeDocument=doc;
-                using(var tr=doc.Database.TransactionManager.StartTransaction())
-                {
-                    var m=AssemblyDrawing.Load(doc.Database,tr);
-                    if(m==null){treeStatus.Text="В текущем DWG нет марки.";return;}
-                    AssemblyDrawing.Synchronize(doc.Database,tr,m);
-                    var root=tree.Nodes.Add(m.Code+" — "+m.Name);
-                    System.Windows.Forms.TreeNode selected=null;
-                    foreach(var part in m.Parts)
-                    {
-                        var instances=m.Instances.Where(i=>i.PartId==part.Id).ToList();
-                        var node=root.Nodes.Add((part.IncludeInSpec?"Поз. "+part.Position+" • ":"[Справ.] ")+part.Name+" × "+instances.Count);
-                        node.Tag=part.Id.ToString("D");
-                        node.ToolTipText=part.Material+" | "+part.UnitMassKg().ToString("0.###")+" кг/шт.";
-                        if((string)node.Tag==previous)selected=node;
-                        for(int i=0;i<instances.Count;i++)
-                        {
-                            var child=node.Nodes.Add("Экземпляр "+(i+1));child.Tag=instances[i].Id.ToString("D");
-                            if((string)child.Tag==previous)selected=child;
-                        }
-                    }
-                    var views=AssemblyViews.Find(doc.Database,tr,m);
-                    if(views.Count>0)
-                    {
-                        var branch=root.Nodes.Add("Виды и сечения");
-                        var hash=AssemblyViews.Signature(m);
-                        foreach(var view in views)
-                        {
-                            var stale=AssemblyViews.IsStale(view.Data,hash);
-                            var node=branch.Nodes.Add((view.Data.FullCut?"Разрез: ":view.Data.IsSection?"Сечение: ":"Вид: ")+view.Data.Name+(view.Data.ManualSnapshot?" [FLATSHOT]":string.IsNullOrEmpty(view.Data.GeneratedChildHandle)?" [старый формат]":"")+(stale?" [обновить]":"")+(view.Data.UnmatchedLineOverrides>0?" [неприменённые правки: "+view.Data.UnmatchedLineOverrides+"]":""));
-                            node.Tag=view.Data.Id.ToString("D");
-                            node.ToolTipText=(stale?"Требуется перестроение. ":"Представление актуально. ")+"Масштаб оформления 1:"+(view.Data.AnnotationScale>0?view.Data.AnnotationScale:20);
-                            if((string)node.Tag==previous)selected=node;
-                        }
-                        branch.Expand();
-                    }
-                    var groups=AssemblyDrawing.AuxiliaryGroups(doc.Database,tr,m);
-                    if(groups.Count>0)
-                    {
-                        var aux=root.Nodes.Add("Вспомогательные чертежи");
-                        for(int i=0;i<groups.Count;i++)
-                        {
-                            var node=aux.Nodes.Add("Чертёж "+(i+1)+" • "+groups[i].Item2.Length+" объектов");
-                            node.Tag=groups[i].Item1;
-                            if((string)node.Tag==previous)selected=node;
-                        }
-                    }
-                    root.Expand();if(selected!=null){selected.EnsureVisible();tree.SelectedNode=selected;}
-                    treeStatus.Text="Деталей: "+m.Instances.Count+" | В спецификации: "+m.Specification().Sum(r=>r.TotalMassKg).ToString("0.###")+" кг";
-                    tr.Commit();
-                }
-            }
-            catch(System.Exception ex){treeStatus.Text="Не удалось обновить состав: "+ex.Message;}
-            finally{tree.EndUpdate();}
+            if(constructorPanel==null||doc==null)return;
+            constructorPanel.RefreshTree(doc);
         }
         static void Watch(Document doc)
         {
@@ -861,35 +1011,11 @@ namespace KotNode.AutoCAD
         {
             if(palette==null)
             {
-                var layout=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=1,RowCount=4,Padding=new Padding(5)};
-                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));layout.RowStyles.Add(new RowStyle(SizeType.Percent,100));
-                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-                var header=new Label {Text="Конструктор • одна марка на DWG",AutoSize=true};layout.Controls.Add(header,0,0);
-                tree=new System.Windows.Forms.TreeView {Dock=DockStyle.Fill,HideSelection=false,ShowNodeToolTips=true};layout.Controls.Add(tree,0,1);
-                treeStatus=new Label {AutoSize=true,MaximumSize=new Size(300,0)};layout.Controls.Add(treeStatus,0,2);
-                var panel=new FlowLayoutPanel {Dock=DockStyle.Fill,AutoSize=true,FlowDirection=System.Windows.Forms.FlowDirection.LeftToRight,WrapContents=true,Padding=new Padding(1)};
-                foreach(var pair in new[]{new[]{"Новая марка","NANEW"},new[]{"Труба","NAPIPE"},new[]{"Лист","NAPLATE"},new[]{"Лист по контуру","NAPOLYPLATE"},new[]{"Кривой лист","NACURVED"},new[]{"Двутавр","NABEAM"},new[]{"Арматура","NAREBAR"},new[]{"Вспом. чертёж","NAAUX"},new[]{"Создать вид","NAVIEW"},new[]{"Создать разрез","NASECTION"},new[]{"Чистое сечение","NACROSS"},new[]{"Свойства вида","NAEDITVIEW"},new[]{"Линии вида","NALINEEDIT"},new[]{"Восстановить линии","NALINERESET"},new[]{"Перевести старый вид","NAMIGRATEVIEW"},new[]{"Обновить вид","NAUPDATEVIEW"},new[]{"Обновить виды","NAUPDATEVIEWS"},new[]{"Свойства","NAEDIT"},new[]{"Копировать","NACOPY"},new[]{"Линейный массив","NAARRAY"},new[]{"Отделить","NADETACH"},new[]{"Удалить","NADELETE"},new[]{"Синхронизировать","NASYNC"},new[]{"Состав и масса","NAINFO"},new[]{"Восстановить","NAREPAIR"},new[]{"Обновить дерево","NAREFRESH"}})
-                {
-                    var cmd=pair[1];var button=new Button {Text=pair[0],AutoSize=true};
-                    button.Click+=(s,e)=>Queue(cmd);panel.Controls.Add(button);
-                }
-                var select=new Button {Text="Выбрать на чертеже",AutoSize=true};
-                Action pick=()=>{
-                    if(treeDocument!=AcApp.DocumentManager.MdiActiveDocument){Queue("NAREFRESH");return;}
-                    if(tree.SelectedNode?.Tag is string key)Queue("NASELECT "+key);
-                };
-                select.Click+=(s,e)=>pick();tree.NodeMouseDoubleClick+=(s,e)=>pick();panel.Controls.Add(select);
-                var remove=new Button {Text="Удалить из дерева",AutoSize=true};
-                remove.Click+=(s,e)=>{
-                    if(treeDocument!=AcApp.DocumentManager.MdiActiveDocument){Queue("NAREFRESH");return;}
-                    if(tree.SelectedNode?.Tag is string key && Guid.TryParse(key,out _))Queue("NATREEDELETE "+key);
-                };
-                panel.Controls.Add(remove);
-                layout.Controls.Add(panel,0,3);
-                palette=new PaletteSet("Узлы — конструктор",new Guid("e51c3c38-b277-4753-9b27-03ed12d5c50f")){Size=new Size(340,650),MinimumSize=new Size(300,420),Style=PaletteSetStyles.ShowCloseButton|PaletteSetStyles.ShowAutoHideButton};
-                palette.Add("Конструктор",layout);
+                constructorPanel=new ConstructorPanel();
+                palette=new PaletteSet("Узлы — конструктор",new Guid("e51c3c38-b277-4753-9b27-03ed12d5c50f")){Size=new Size(360,660),MinimumSize=new Size(320,460),Style=PaletteSetStyles.ShowCloseButton|PaletteSetStyles.ShowAutoHideButton};
+                palette.Add("Конструктор",constructorPanel);
                 AcApp.DocumentManager.DocumentActivated+=(s,e)=>{
-                    if(tree!=null){tree.Nodes.Clear();treeDocument=null;treeStatus.Text="Обновите дерево для текущего DWG.";}
+                    constructorPanel?.ClearTree("Нажмите «Обновить» для текущего DWG.");
                     Watch(e.Document);
                 };
             }

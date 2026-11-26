@@ -23,6 +23,15 @@ namespace KotNode.AutoCAD
             if(e is Line line)fields.AddRange(new[]{P(line.StartPoint),P(line.EndPoint),V(line.Normal),N(line.Thickness)});
             else if(e is Arc arc)fields.AddRange(new[]{P(arc.Center),N(arc.Radius),N(arc.StartAngle),N(arc.EndAngle),V(arc.Normal),N(arc.Thickness)});
             else if(e is Circle circle)fields.AddRange(new[]{P(circle.Center),N(circle.Radius),V(circle.Normal),N(circle.Thickness)});
+            else if(e is Polyline poly)
+            {
+                fields.AddRange(new[]{poly.Closed.ToString(),poly.Plinegen.ToString(),poly.NumberOfVertices.ToString(CultureInfo.InvariantCulture)});
+                for(int i=0;i<poly.NumberOfVertices;i++)
+                {
+                    var pt=poly.GetPoint2dAt(i);
+                    fields.Add(ViewGeometryStamp.Record(N(pt.X),N(pt.Y),N(poly.GetBulgeAt(i))));
+                }
+            }
             else if(e is Hatch hatch)fields.AddRange(new[]{hatch.PatternName,N(hatch.PatternAngle),N(hatch.PatternSpace),N(hatch.PatternScale),hatch.HatchStyle.ToString(),hatch.NumberOfLoops.ToString(CultureInfo.InvariantCulture)});
             // Extents supplement the inventory; for other native curves or complex
             // hatch edits this is not a complete serialization of the object.
