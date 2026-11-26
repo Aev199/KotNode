@@ -16,8 +16,8 @@ namespace KotNode.AutoCAD
     public static class AssemblyViews
     {
         internal const string Key="KOTNODE_VIEW_1";
-        internal const int Revision=16;
-        internal const string VisibleLayer="NA_VISIBLE",HiddenLayer="NA_HIDDEN",CutLayer="NA_CUT",HatchLayer="NA_HATCH";
+        internal const int Revision=17;
+        internal const string VisibleLayer="NA_VISIBLE",HiddenLayer="NA_HIDDEN",CutLayer="NA_CUT",HatchLayer="NA_HATCH",WeldLayer="NA_WELD";
         static double PaperScale(ViewData d)=>d.AnnotationScale>0?d.AnnotationScale:20;
         static void Layers(Database db,Transaction tr)
         {
@@ -41,13 +41,13 @@ namespace KotNode.AutoCAD
                 }
             }
             var layers=(LayerTable)tr.GetObject(db.LayerTableId,OpenMode.ForRead);
-            foreach(var name in new[]{VisibleLayer,HiddenLayer,CutLayer,HatchLayer})
+            foreach(var name in new[]{VisibleLayer,HiddenLayer,CutLayer,HatchLayer,WeldLayer})
             {
                 if(layers.Has(name))continue;
                 if(!layers.IsWriteEnabled)layers.UpgradeOpen();
                 var layer=new LayerTableRecord{Name=name,Color=Color.FromColorIndex(ColorMethod.ByAci,7),
                     LinetypeObjectId=name==HiddenLayer?types[dashed]:types["Continuous"],
-                    LineWeight=name==CutLayer?LineWeight.LineWeight035:name==VisibleLayer?LineWeight.LineWeight025:LineWeight.LineWeight013};
+                    LineWeight=name==CutLayer?LineWeight.LineWeight035:name==VisibleLayer?LineWeight.LineWeight025:name==WeldLayer?LineWeight.LineWeight018:LineWeight.LineWeight013};
                 layers.Add(layer);tr.AddNewlyCreatedDBObject(layer,true);
             }
         }
@@ -76,6 +76,8 @@ namespace KotNode.AutoCAD
             public string GeneratedStamp { get; set; }
             public List<ViewLineOverride> LineOverrides { get; set; }=new List<ViewLineOverride>();
             public int UnmatchedLineOverrides { get; set; }
+            public List<ViewWeldOverlay> Welds { get; set; }=new List<ViewWeldOverlay>();
+            public int UnmatchedWelds { get; set; }
         }
         internal sealed class Entry
         {

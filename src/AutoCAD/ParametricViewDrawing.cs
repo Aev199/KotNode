@@ -52,18 +52,26 @@ namespace KotNode.AutoCAD
             var curves=ViewLineOverrides.Apply(result.Curves,data.LineOverrides,data.Hidden,out _);
             return ViewLineOverrides.Chain(curves);
         }
+        internal static List<ParametricProjection.Curve2> ComputeRawCurves(AssemblyMark mark,AssemblyViews.ViewData data)
+        {
+            var frame=AssemblyViews.ResolveFrame(mark,data);
+            return ParametricProjection.Build(mark,frame,data.IsSection,true).Curves;
+        }
         internal static ObjectId Build(Database db,Transaction tr,AssemblyMark mark,AssemblyViews.ViewData data)
         {
             // Compute and validate everything before adding drawing objects.
             var result=ParametricProjection.Build(mark,data.Frame,data.IsSection,true);
-            result.Curves=ViewLineOverrides.Apply(result.Curves,data.LineOverrides,data.Hidden,out var unmatched);
+            var rawCurves=result.Curves;
+            result.Curves=ViewLineOverrides.Apply(rawCurves,data.LineOverrides,data.Hidden,out var unmatched);
             data.UnmatchedLineOverrides=unmatched;
             if(result.Curves.Count==0)throw new InvalidOperationException("Параметрическое представление пустое: проверьте направление и секущую плоскость.");
             var chains=ViewLineOverrides.Chain(result.Curves);
+            double scale=data.AnnotationScale>0?data.AnnotationScale:20;
+            var weldStrokes=ViewWelds.Build(rawCurves,data.Welds,scale,out var unmatchedWelds);
+            data.UnmatchedWelds=unmatchedWelds;
             var table=(BlockTable)tr.GetObject(db.BlockTableId,OpenMode.ForWrite);
             var block=new BlockTableRecord{Name="NA_PARAM_VIEW_"+Guid.NewGuid().ToString("N"),Units=UnitsValue.Millimeters};
             var id=table.Add(block);tr.AddNewlyCreatedDBObject(block,true);
-            double scale=data.AnnotationScale>0?data.AnnotationScale:20;
             double globalScale=db.Ltscale>1e-6?db.Ltscale:1;
             var types=(LinetypeTable)tr.GetObject(db.LinetypeTableId,OpenMode.ForRead);
             var dashed=types["NA_DASHED"];var continuous=types["Continuous"];
@@ -85,6 +93,16 @@ namespace KotNode.AutoCAD
                         entity.CreateExtensionDictionary();
                         AssemblyDrawing.Write((DBDictionary)tr.GetObject(entity.ExtensionDictionary,OpenMode.ForRead),LineSourceTag,chain.Segments[0],tr);
                     }
+                }
+            foreach(var stroke in weldStrokes)
+                using(var line=new Line(new Point3d(stroke.X0,stroke.Y0,0),new Point3d(stroke.X1,stroke.Y1,0)))
+                {
+                    double len=Math.Sqrt((stroke.X1-stroke.X0)*(stroke.X1-stroke.X0)+(stroke.Y1-stroke.Y0)*(stroke.Y1-stroke.Y0));
+                    double ltScale=stroke.Hidden&&len>1e-6?ViewLineOverrides.HiddenLineScale(len,scale,globalScale,period):1;
+                    var lineId=AssemblyViews.StoreCurve(block,tr,db,line,AssemblyViews.WeldLayer,ltScale);
+                    var entity=(Entity)tr.GetObject(lineId,OpenMode.ForWrite);
+                    entity.LinetypeId=stroke.Hidden?dashed:continuous;
+                    entity.LinetypeScale=ltScale;
                 }
             if(data.NoHatch)return id;
             int index=0;

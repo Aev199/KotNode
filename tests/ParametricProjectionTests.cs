@@ -267,6 +267,35 @@ static class ParametricProjectionTests
         var spatialBarView=ParametricProjection.Build(spatialBarMark,oblique,false,true);
         Check(spatialBarView.Curves.Count>0&&spatialBarView.Curves.All(ViewLineOverrides.HasSource),"3D spatially bent rebar with occluding plate has 100% semantic keys");
         Check(ParametricProjection.Build(spatialBarMark,At(0,0,0),false,true).Curves.Any(c=>c.Hidden),"plate occludes rebar behind it");
+        // --- Iteration 4.1.B / Generator 17: Parametric Weld Overlays (NAWELD) ---
+        var weldBatch=Guid.NewGuid();
+        var plateMark=Mark();
+        plateMark.AddPart(Plate(200,100,12),At(0,0,0));
+        var plateView=ParametricProjection.Build(plateMark,At(0,0,0),false,true);
+        var plateChains=ViewLineOverrides.Chain(plateView.Curves);
+        var bottomEdge=ViewLineOverrides.Pick(plateChains,100,0,5.0).Chain;
+        Check(ViewWelds.SideFromPoint(bottomEdge,100,15)==ViewWeldSide.Left,"weld side above horizontal +X edge is Left");
+        Check(ViewWelds.SideFromPoint(bottomEdge,100,-15)==ViewWeldSide.Right,"weld side below horizontal +X edge is Right");
+        var siteWelds=ViewWelds.CreateForChain(bottomEdge,ViewWeldStyle.Site,ViewWeldSide.Right,8,false,weldBatch);
+        var siteStrokes=ViewWelds.Build(plateView.Curves,siteWelds,10,out var unmatchedW);
+        Check(unmatchedW==0&&siteStrokes.Count>=2&&siteStrokes.Count%2==0&&siteStrokes.All(s=>!s.Hidden),"site weld produces paired cross strokes on NA_WELD");
+        Check(siteStrokes.All(s=>s.Y0<0.5&&s.Y1<0.5),"site weld strokes placed on chosen Right side");
+        var factoryWelds=ViewWelds.CreateRangeForChain(bottomEdge,ViewWeldStyle.Factory,ViewWeldSide.Left,6,0.2,0.8,false,weldBatch);
+        var factoryStrokes=ViewWelds.Build(plateView.Curves,factoryWelds,10,out unmatchedW);
+        Check(unmatchedW==0&&factoryStrokes.Count>=4&&factoryStrokes.All(s=>s.X0>=39&&s.X0<=161&&s.Y1>0),"factory weld ticks cover picked fragment on Left side");
+        var hiddenWelds=ViewWelds.CreateForChain(bottomEdge,ViewWeldStyle.Hidden,ViewWeldSide.Both,6,true,weldBatch);
+        var hiddenStrokes=ViewWelds.Build(plateView.Curves,hiddenWelds,10,out unmatchedW);
+        Check(unmatchedW==0&&hiddenStrokes.Count>=2&&hiddenStrokes.All(s=>s.Hidden),"hidden weld strokes marked hidden");
+        // Resizing plate lengthens weld automatically with zero unmatched entries
+        var longerPlate=Json.Copy(plateMark);longerPlate.Parts[0].Plate.Length=400;
+        var longerPlateView=ParametricProjection.Build(longerPlate,At(0,0,0),false,true);
+        var longerSiteStrokes=ViewWelds.Build(longerPlateView.Curves,siteWelds,10,out unmatchedW);
+        Check(unmatchedW==0&&longerSiteStrokes.Count>siteStrokes.Count,"weld scales automatically when plate length doubles");
+        // Weld along faceted curved plate arc follows resized radius
+        var arcWelds=ViewWelds.CreateForChain(outerArcChain,ViewWeldStyle.Factory,ViewWeldSide.Left,6,false,weldBatch);
+        var arcStrokes=ViewWelds.Build(resizedCurvedView.Curves,arcWelds,10,out unmatchedW);
+        Check(unmatchedW==0&&arcStrokes.Count>=4,"faceted curved arc weld survives radius and facet-count change");
+        Rejected(()=>ViewWelds.Validate(new ViewWeldOverlay{InstanceId=Guid.NewGuid(),SourceKey="k",From=0,To=1,LegMm=-2}),"negative weld leg rejected");
         Console.WriteLine(checks+" parametric projection checks passed");
     }
     static double Length(ParametricProjection.Curve2 c)=>c.Circular?c.Radius*c.Sweep:Math.Sqrt(Math.Pow(c.X1-c.X0,2)+Math.Pow(c.Y1-c.Y0,2));

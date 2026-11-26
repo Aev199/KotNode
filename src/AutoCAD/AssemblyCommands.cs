@@ -532,8 +532,8 @@ namespace KotNode.AutoCAD
                 data.Name=form.Get("name").Trim();data.AnnotationScale=form.Value("scale");
                 if(data.IsSection)data.NoHatch=!form.Checked("hatch");
                 if(!data.IsSection||data.FullCut)data.Hidden=form.Checked("hidden");
-                if(form.Checked("plane")&&(data.LineOverrides?.Count??0)>0)
-                    throw new InvalidOperationException("Сначала снимите корректировки линий (NALINERESET), затем изменяйте плоскость.");
+                if(form.Checked("plane")&&((data.LineOverrides?.Count??0)>0||(data.Welds?.Count??0)>0))
+                    throw new InvalidOperationException("Сначала снимите корректировки линий (NALINERESET) и швов (NAWELDRESET), затем изменяйте плоскость.");
                 if(form.Checked("plane")||form.Checked("anchor")||form.Checked("detach"))
                 {
                     var oldAnchor=m.Instances.SingleOrDefault(i=>data.FrameAnchorId.HasValue&&i.Id==data.FrameAnchorId.Value);
@@ -564,18 +564,47 @@ namespace KotNode.AutoCAD
             public Guid Id;
             public string Name;
             public bool ModelStale;
+            public double AnnotationScale;
             public Matrix3d ToWorld;
             public Matrix3d ToLocal;
             public List<CurveChain> Chains;
+            public List<ParametricProjection.Curve2> RawCurves;
         }
         sealed class LineEditStep
         {
             public List<ViewLineOverride> Rules=new List<ViewLineOverride>();
             public List<AcGi.Drawable> Transients=new List<AcGi.Drawable>();
         }
+        sealed class WeldEditStep
+        {
+            public List<ViewWeldOverlay> Welds=new List<ViewWeldOverlay>();
+            public List<AcGi.Drawable> Transients=new List<AcGi.Drawable>();
+        }
         static string ModeLabel(ViewLineMode mode)=>mode==ViewLineMode.Visible?"Видимая":mode==ViewLineMode.Hidden?"Скрытая":mode==ViewLineMode.Suppressed?"Удалить":"Авто";
+        static string WeldStyleLabel(ViewWeldStyle style)=>style==ViewWeldStyle.Site?"Монтажный (×)":style==ViewWeldStyle.Hidden?"Невидимый":"Заводской (|)";
         static string ScopeLabel(bool whole,bool partial)=>whole?"Кромка":partial?"Участок":"Сегмент";
         static short ModeColor(ViewLineMode mode)=>mode==ViewLineMode.Visible?(short)3:mode==ViewLineMode.Hidden?(short)2:mode==ViewLineMode.Suppressed?(short)1:(short)4;
+        static List<AcGi.Drawable> AddWeldPreviewTransients(IEnumerable<WeldStroke> strokes,Matrix3d toWorld)
+        {
+            var added=new List<AcGi.Drawable>();
+            var tm=AcGi.TransientManager.CurrentTransientManager;
+            if(tm==null)return added;
+            var vps=new IntegerCollection();
+            foreach(var s in strokes)
+            {
+                try
+                {
+                    var d=new Line(new Point3d(s.X0,s.Y0,0),new Point3d(s.X1,s.Y1,0));
+                    d.TransformBy(toWorld);
+                    d.ColorIndex=6; // Magenta
+                    d.LineWeight=LineWeight.LineWeight035;
+                    tm.AddTransient(d,AcGi.TransientDrawingMode.DirectTopmost,128,vps);
+                    added.Add(d);
+                }
+                catch { }
+            }
+            return added;
+        }
         static List<AcGi.Drawable> AddPreviewTransients(IEnumerable<ParametricProjection.Curve2> curves,Matrix3d toWorld,ViewLineMode mode)
         {
             var added=new List<AcGi.Drawable>();
@@ -878,6 +907,277 @@ namespace KotNode.AutoCAD
             AssemblyViews.Rebuild(doc.Database,tr,m,refs,entry);
             AssemblyDrawing.Save(doc.Database,tr,m);
             ed.WriteMessage("\nОсталось корректировок: "+journal.Count);
+        });
+        [CommandMethod("NAWELD",CommandFlags.Modal)]
+        public void EditWelds()
+        {
+            Diagnostics.Begin("NAWELD");
+            var doc=AcApp.DocumentManager.MdiActiveDocument;
+            if(doc==null)return;
+            var ed=doc.Editor;
+            var steps=new List<WeldEditStep>();
+            var activeTemp=new List<AcGi.Drawable>();
+            try
+            {
+                if(!doc.Database.TileMode||doc.Database.Insunits!=UnitsValue.Millimeters)
+                    throw new InvalidOperationException("Откройте пространство модели (TILEMODE=1), единицы DWG — миллиметры (INSUNITS=4).");
+
+                var cache=new List<EditableViewCache>();
+                bool upgradedAny=false;
+                using(var tr=doc.Database.TransactionManager.StartTransaction())
+                {
+                    var m=Need(doc,tr);
+                    var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
+                    var entries=AssemblyViews.Find(doc.Database,tr,m);
+                    var signature=AssemblyViews.Signature(m);
+                    foreach(var entry in entries)
+                    {
+                        if(entry.Data.ManualSnapshot||string.IsNullOrEmpty(entry.Data.GeneratedChildHandle))continue;
+                        bool modelStale=entry.Data.SourceHash!=signature;
+                        if(!modelStale&&entry.Data.GeneratorRevision!=AssemblyViews.Revision)
+                        {
+                            try
+                            {
+                                AssemblyViews.Rebuild(doc.Database,tr,m,refs,entry);
+                                upgradedAny=true;
+                            }
+                            catch(System.Exception ex)
+                            {
+                                ed.WriteMessage("\nВид «"+entry.Data.Name+"» не обновлён автоматически: "+ex.Message);
+                                continue;
+                            }
+                        }
+                        var world=entry.Reference.BlockTransform;
+                        var raw=modelStale?new List<ParametricProjection.Curve2>():ParametricViewDrawing.ComputeRawCurves(m,entry.Data);
+                        var chains=modelStale?new List<CurveChain>():ParametricViewDrawing.ComputeChains(m,entry.Data);
+                        cache.Add(new EditableViewCache
+                        {
+                            Id=entry.Data.Id,Name=entry.Data.Name,ModelStale=modelStale,
+                            AnnotationScale=entry.Data.AnnotationScale>0?entry.Data.AnnotationScale:20,
+                            ToWorld=world,ToLocal=world.Inverse(),Chains=chains,RawCurves=raw
+                        });
+                    }
+                    if(upgradedAny)AssemblyDrawing.Save(doc.Database,tr,m);
+                    tr.Commit();
+                }
+                if(upgradedAny)
+                {
+                    doc.TransactionManager.QueueForGraphicsFlush();
+                    ed.Regen();
+                    RefreshTree(doc);
+                }
+                if(cache.Count==0)
+                {
+                    ed.WriteMessage("\nНет параметрических видов нового формата. Создайте вид (NAVIEW/NASECTION) или переведите старый (NAMIGRATEVIEW).");
+                    return;
+                }
+
+                var styleOpt=new PromptKeywordOptions("\nТип шва [Site/Factory/Hidden] <Site>: "){AllowNone=true};
+                foreach(var k in new[]{"Site","Factory","Hidden"})styleOpt.Keywords.Add(k);
+                styleOpt.Keywords.Default="Site";
+                var styleAns=ed.GetKeywords(styleOpt);
+                if(styleAns.Status!=PromptStatus.OK&&styleAns.Status!=PromptStatus.None)return;
+                var style=styleAns.StringResult=="Factory"?ViewWeldStyle.Factory:styleAns.StringResult=="Hidden"?ViewWeldStyle.Hidden:ViewWeldStyle.Site;
+
+                var scopeOpt=new PromptKeywordOptions("\nОбласть [Segment/Fragment/Edge] <Segment>: "){AllowNone=true};
+                foreach(var k in new[]{"Segment","Fragment","Edge"})scopeOpt.Keywords.Add(k);
+                scopeOpt.Keywords.Default="Segment";
+                var scopeAns=ed.GetKeywords(scopeOpt);
+                if(scopeAns.Status!=PromptStatus.OK&&scopeAns.Status!=PromptStatus.None)return;
+                bool whole=scopeAns.StringResult=="Edge",partial=scopeAns.StringResult=="Fragment";
+
+                var legOpt=new PromptDoubleOptions("\nКатет шва k, мм <6>: "){AllowNone=true,AllowNegative=false,AllowZero=false,DefaultValue=6,UseDefaultValue=true};
+                var legAns=ed.GetDouble(legOpt);
+                if(legAns.Status!=PromptStatus.OK&&legAns.Status!=PromptStatus.None)return;
+                double legMm=legAns.Status==PromptStatus.None?6:legAns.Value;
+                if(double.IsNaN(legMm)||double.IsInfinity(legMm)||legMm<=0||legMm>100)
+                    throw new InvalidOperationException("Катет шва должен быть от 0 до 100 мм.");
+
+                var batch=Guid.NewGuid();
+                EditableViewCache selected=null;
+                while(true)
+                {
+                    var prompt="\n["+WeldStyleLabel(style)+" k="+legMm.ToString("0.#")+" | "+ScopeLabel(whole,partial)+"] Укажите кромку вида (Enter — применить, Esc — отменить) [Site/Factory/Hidden/Segment/Fragment/Edge/Leg/Undo]: ";
+                    var opt=new PromptPointOptions(prompt){AllowNone=true};
+                    foreach(var k in new[]{"Site","Factory","Hidden","Segment","Fragment","Edge","Leg","Undo"})opt.Keywords.Add(k);
+                    var hitPt=ed.GetPoint(opt);
+                    if(hitPt.Status==PromptStatus.None)break;
+                    if(hitPt.Status==PromptStatus.Keyword)
+                    {
+                        switch(hitPt.StringResult)
+                        {
+                            case "Site": style=ViewWeldStyle.Site;break;
+                            case "Factory": style=ViewWeldStyle.Factory;break;
+                            case "Hidden": style=ViewWeldStyle.Hidden;break;
+                            case "Segment": whole=false;partial=false;break;
+                            case "Fragment": whole=false;partial=true;break;
+                            case "Edge": whole=true;partial=false;break;
+                            case "Leg":
+                                var lo=new PromptDoubleOptions("\nНовый катет шва k, мм <"+legMm.ToString("0.#")+">: "){AllowNone=true,AllowNegative=false,AllowZero=false,DefaultValue=legMm,UseDefaultValue=true};
+                                var la=ed.GetDouble(lo);
+                                if(la.Status==PromptStatus.OK&&la.Value>0&&la.Value<=100)legMm=la.Value;
+                                break;
+                            case "Undo":
+                                if(steps.Count>0)
+                                {
+                                    var last=steps[steps.Count-1];
+                                    ClearTransients(last.Transients);
+                                    steps.RemoveAt(steps.Count-1);
+                                    if(steps.Count==0)selected=null;
+                                    ed.WriteMessage("\nПоследний шов отменён. Подготовлено шагов: "+steps.Count);
+                                }
+                                else ed.WriteMessage("\nНет швов для отмены.");
+                                break;
+                        }
+                        continue;
+                    }
+                    if(hitPt.Status!=PromptStatus.OK)return;
+
+                    var worldPt=hitPt.Value.TransformBy(ed.CurrentUserCoordinateSystem);
+                    double tol=PickTolerance();
+                    EditableViewCache hitView=null;
+                    PickHit bestHit=null;
+                    foreach(var v in cache)
+                    {
+                        if(selected!=null&&v.Id!=selected.Id)continue;
+                        if(v.ModelStale)continue;
+                        var local=worldPt.TransformBy(v.ToLocal);
+                        var candidate=ViewLineOverrides.Pick(v.Chains,local.X,local.Y,tol);
+                        if(candidate!=null&&(bestHit==null||candidate.Distance<bestHit.Distance))
+                        {
+                            bestHit=candidate;hitView=v;
+                        }
+                    }
+                    if(bestHit==null)
+                    {
+                        if(selected==null&&cache.Any(v=>v.ModelStale))
+                            ed.WriteMessage("\nЛиния не найдена. Если нужный вид устарел, сначала выполните NAUPDATEVIEW.");
+                        else
+                            ed.WriteMessage("\nРядом с указанной точкой не найдено линий вида.");
+                        continue;
+                    }
+
+                    activeTemp.AddRange(AddPreviewTransients(bestHit.Chain.Segments,hitView.ToWorld,ViewLineMode.Auto));
+                    double rangeA=0,rangeB=1;bool longer=false;
+                    if(partial)
+                    {
+                        var first=ed.GetPoint("\nПервая граница шва на линии: ");
+                        if(first.Status!=PromptStatus.OK){ClearTransients(activeTemp);return;}
+                        var second=ed.GetPoint(new PromptPointOptions("\nВторая граница шва на линии: "){UseBasePoint=true,BasePoint=first.Value});
+                        if(second.Status!=PromptStatus.OK){ClearTransients(activeTemp);return;}
+                        var u=first.Value.TransformBy(ed.CurrentUserCoordinateSystem).TransformBy(hitView.ToLocal);
+                        var v=second.Value.TransformBy(ed.CurrentUserCoordinateSystem).TransformBy(hitView.ToLocal);
+                        if(bestHit.Chain.IsFullLoop)
+                        {
+                            var arc=new PromptKeywordOptions("\nДуга между точками [Short/Long] <Short>: "){AllowNone=true};
+                            arc.Keywords.Add("Short");arc.Keywords.Add("Long");arc.Keywords.Default="Short";
+                            var pick=ed.GetKeywords(arc);
+                            if(pick.Status!=PromptStatus.OK&&pick.Status!=PromptStatus.None){ClearTransients(activeTemp);return;}
+                            longer=pick.StringResult=="Long";
+                        }
+                        try
+                        {
+                            rangeA=ViewLineOverrides.ParameterAt(bestHit.Chain,u.X,u.Y);
+                            rangeB=ViewLineOverrides.ParameterAt(bestHit.Chain,v.X,v.Y);
+                        }
+                        catch(System.IO.InvalidDataException ex){ClearTransients(activeTemp);ed.WriteMessage("\n"+ex.Message);continue;}
+                    }
+
+                    var sideOpt=new PromptPointOptions("\nУкажите сторону шва на чертеже (Enter — по обе стороны) [Both]: "){AllowNone=true};
+                    sideOpt.Keywords.Add("Both");
+                    var sideAns=ed.GetPoint(sideOpt);
+                    ClearTransients(activeTemp);
+                    ViewWeldSide side;
+                    if(sideAns.Status==PromptStatus.None||(sideAns.Status==PromptStatus.Keyword&&sideAns.StringResult=="Both"))
+                        side=ViewWeldSide.Both;
+                    else if(sideAns.Status==PromptStatus.OK)
+                    {
+                        var sp=sideAns.Value.TransformBy(ed.CurrentUserCoordinateSystem).TransformBy(hitView.ToLocal);
+                        side=ViewWelds.SideFromPoint(bestHit.Chain,sp.X,sp.Y);
+                    }
+                    else return;
+
+                    var step=new WeldEditStep();
+                    try
+                    {
+                        if(partial)
+                            step.Welds.AddRange(ViewWelds.CreateRangeForChain(bestHit.Chain,style,side,legMm,rangeA,rangeB,longer,batch));
+                        else
+                            step.Welds.AddRange(ViewWelds.CreateForChain(bestHit.Chain,style,side,legMm,whole,batch));
+                    }
+                    catch(System.IO.InvalidDataException ex){ed.WriteMessage("\n"+ex.Message);continue;}
+
+                    var previewStrokes=ViewWelds.Build(hitView.RawCurves,step.Welds,hitView.AnnotationScale,out _);
+                    step.Transients.AddRange(AddWeldPreviewTransients(previewStrokes,hitView.ToWorld));
+                    steps.Add(step);
+                    selected=hitView;
+                    ed.WriteMessage("\n["+WeldStyleLabel(style)+" k="+legMm.ToString("0.#")+"] Добавлен шов. Всего швов в серии: "+steps.Sum(s=>s.Welds.Count));
+                }
+
+                var allWelds=steps.SelectMany(s=>s.Welds).ToList();
+                if(selected==null||allWelds.Count==0)return;
+
+                int unmatched;
+                using(var tr=doc.Database.TransactionManager.StartTransaction())
+                {
+                    var m=Need(doc,tr);
+                    var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
+                    var entry=AssemblyViews.Find(doc.Database,tr,m).SingleOrDefault(e=>e.Data.Id==selected.Id);
+                    if(entry==null)throw new InvalidOperationException("Представление не найдено.");
+                    if(entry.Data.Welds==null)entry.Data.Welds=new List<ViewWeldOverlay>();
+                    entry.Data.Welds.AddRange(allWelds);
+                    AssemblyViews.Rebuild(doc.Database,tr,m,refs,entry);
+                    AssemblyDrawing.Save(doc.Database,tr,m);
+                    unmatched=entry.Data.UnmatchedWelds;
+                    tr.Commit();
+                }
+                doc.TransactionManager.QueueForGraphicsFlush();
+                ed.Regen();
+                RefreshTree(doc);
+                ed.WriteMessage("\nСварные швы сохранены ("+allWelds.Count+"); без соответствия: "+unmatched);
+            }
+            catch(System.Exception ex)
+            {
+                var log=Diagnostics.Write(ex);
+                ed.WriteMessage("\nКонструктор: "+ex.Message+"\nЖурнал: "+log);
+            }
+            finally
+            {
+                ClearTransients(activeTemp);
+                foreach(var s in steps)ClearTransients(s.Transients);
+            }
+        }
+        [CommandMethod("NAWELDRESET",CommandFlags.Modal)]
+        public void ResetWelds()=>Run("NAWELDRESET",(doc,tr)=>{
+            var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
+            var ed=doc.Editor;var picked=ed.GetEntity("\nВыберите вид для удаления сварных швов: ");
+            if(picked.Status!=PromptStatus.OK)return;
+            var entry=AssemblyViews.Find(doc.Database,tr,m).SingleOrDefault(e=>e.Reference.ObjectId==picked.ObjectId);
+            if(entry==null||entry.Data.ManualSnapshot)throw new InvalidOperationException("Выберите параметрический вид.");
+            var welds=entry.Data.Welds;
+            if(welds==null||welds.Count==0){ed.WriteMessage("\nНа виде нет параметрических сварных швов.");return;}
+            var choice=new PromptKeywordOptions("\nУдалить швы [Last/All/Number] <Last>: "){AllowNone=true};
+            foreach(var k in new[]{"Last","All","Number"})choice.Keywords.Add(k);
+            choice.Keywords.Default="Last";
+            var answer=ed.GetKeywords(choice);
+            if(answer.Status!=PromptStatus.OK&&answer.Status!=PromptStatus.None)return;
+            if(answer.StringResult=="All")welds.Clear();
+            else if(answer.StringResult=="Number")
+            {
+                for(int i=0;i<welds.Count;i++)
+                    ed.WriteMessage("\n"+(i+1)+": "+WeldStyleLabel(welds[i].Style)+" k="+welds[i].LegMm.ToString("0.#")+" "+welds[i].SourceKey+" ["+welds[i].From.ToString("0.###")+"–"+welds[i].To.ToString("0.###")+"]");
+                var opt=new PromptIntegerOptions("\nНомер шва: "){LowerLimit=1,UpperLimit=welds.Count};
+                var number=ed.GetInteger(opt);if(number.Status!=PromptStatus.OK)return;
+                welds.RemoveAt(number.Value-1);
+            }
+            else
+            {
+                var batch=welds.Last().BatchId;
+                welds.RemoveAll(r=>r.BatchId==batch);
+            }
+            AssemblyViews.Rebuild(doc.Database,tr,m,refs,entry);
+            AssemblyDrawing.Save(doc.Database,tr,m);
+            ed.WriteMessage("\nОсталось сварных швов: "+welds.Count);
         });
         [CommandMethod("NAUPDATEVIEWS",CommandFlags.Modal)]
         public void UpdateViews()=>Run("NAUPDATEVIEWS",(doc,tr)=>{

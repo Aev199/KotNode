@@ -82,7 +82,7 @@ namespace KotNode.AutoCAD
             root.Controls.Add(headerPanel,0,0);
 
             // --- 1. Tabbed actions (3 clean functional tabs instead of 28 flat buttons) ---
-            var tabs=new TabControl{Dock=DockStyle.Fill,Height=126,Margin=new Padding(0,0,0,6)};
+            var tabs=new TabControl{Dock=DockStyle.Fill,Height=152,Margin=new Padding(0,0,0,6)};
             tabs.TabPages.Add(BuildPartsTab());
             tabs.TabPages.Add(BuildEditTab());
             tabs.TabPages.Add(BuildViewsTab());
@@ -193,7 +193,7 @@ namespace KotNode.AutoCAD
         TabPage BuildViewsTab()
         {
             var page=new TabPage("Виды"){Padding=new Padding(4)};
-            var grid=MakeGrid(3,3);
+            var grid=MakeGrid(3,4);
             AddGridButton(grid,0,0,"Создать вид","NAVIEW","Построить параметрический вид (NAVIEW)");
             AddGridButton(grid,1,0,"Разрез","NASECTION","Построить параметрический разрез (NASECTION)");
             AddGridButton(grid,2,0,"Сечение","NACROSS","Построить чистое сечение без заднего плана (NACROSS)");
@@ -205,6 +205,10 @@ namespace KotNode.AutoCAD
             grid.Controls.Add(lineEdit,0,2);
             grid.SetColumnSpan(lineEdit,2);
             AddGridButton(grid,2,2,"Сброс линий","NALINERESET","Отменить ручные правки линий вида (NALINERESET)");
+            var weldBtn=GridButton("Сварные швы","NAWELD","Нанести параметрические сварные швы по кромкам вида (NAWELD)");
+            grid.Controls.Add(weldBtn,0,3);
+            grid.SetColumnSpan(weldBtn,2);
+            AddGridButton(grid,2,3,"Сброс швов","NAWELDRESET","Удалить параметрические сварные швы вида (NAWELDRESET)");
             page.Controls.Add(grid);
             return page;
         }
@@ -261,6 +265,9 @@ namespace KotNode.AutoCAD
                 {
                     treeMenu.Items.Add("Редактировать линии (NALINEEDIT)",null,(s,e)=>Queue("NALINEEDIT"));
                     treeMenu.Items.Add("Сбросить линии (NALINERESET)",null,(s,e)=>Queue("NALINERESET"));
+                    treeMenu.Items.Add(new ToolStripSeparator());
+                    treeMenu.Items.Add("Сварные швы (NAWELD)",null,(s,e)=>Queue("NAWELD"));
+                    treeMenu.Items.Add("Сбросить швы (NAWELDRESET)",null,(s,e)=>Queue("NAWELDRESET"));
                     treeMenu.Items.Add(new ToolStripSeparator());
                     treeMenu.Items.Add("Обновить вид (NAUPDATEVIEW)",null,(s,e)=>Queue("NAUPDATEVIEW"));
                     treeMenu.Items.Add("Свойства вида (NAEDITVIEW)",null,(s,e)=>Queue("NAEDITVIEW"));
@@ -401,19 +408,21 @@ namespace KotNode.AutoCAD
                         {
                             var stale=AssemblyViews.IsStale(view.Data,hash);
                             if(stale)staleCount++;
-                            unmatchedCount+=view.Data.UnmatchedLineOverrides;
+                            unmatchedCount+=view.Data.UnmatchedLineOverrides+view.Data.UnmatchedWelds;
                             bool legacy=!view.Data.ManualSnapshot&&string.IsNullOrEmpty(view.Data.GeneratedChildHandle);
                             int overrideCount=view.Data.LineOverrides?.Count??0;
+                            int weldCount=view.Data.Welds?.Count??0;
                             var label=(view.Data.FullCut?"Разрез: ":view.Data.IsSection?"Сечение: ":"Вид: ")+view.Data.Name
                                 +(view.Data.ManualSnapshot?" [FLATSHOT]":legacy?" [старый формат]":"")
                                 +(overrideCount>0?" [правок: "+overrideCount+"]":"")
+                                +(weldCount>0?" [швов: "+weldCount+"]":"")
                                 +(stale?" [обновить]":"")
-                                +(view.Data.UnmatchedLineOverrides>0?" [неприменённых: "+view.Data.UnmatchedLineOverrides+"]":"");
+                                +(view.Data.UnmatchedLineOverrides+view.Data.UnmatchedWelds>0?" [неприменённых: "+(view.Data.UnmatchedLineOverrides+view.Data.UnmatchedWelds)+"]":"");
                             var key=view.Data.Id.ToString("D");
                             var node=branch.Nodes.Add(label);
                             node.Tag=new NodeTag{Kind=view.Data.ManualSnapshot?NodeKind.ManualView:legacy?NodeKind.LegacyView:NodeKind.View,Key=key};
                             node.ToolTipText=(stale?"Требуется перестроение. ":"Актуально. ")+"Масштаб 1:"+(view.Data.AnnotationScale>0?view.Data.AnnotationScale:20);
-                            if(stale||view.Data.UnmatchedLineOverrides>0)node.ForeColor=Color.DarkRed;
+                            if(stale||view.Data.UnmatchedLineOverrides>0||view.Data.UnmatchedWelds>0)node.ForeColor=Color.DarkRed;
                             if(key==previous)selected=node;
                         }
                         branch.Expand();
