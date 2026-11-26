@@ -105,6 +105,20 @@ static class StabilizationTests
         var plateMigrated=ViewReferenceMigration.Lines(edits,plateOld,plateNew);
         ViewLineOverrides.Apply(plateNew,plateMigrated,true,out missing);
         Check(missing==0,"all old plate outline edges migrate to stable source keys");
+        var thin=new AssemblyMark();thin.AddPart(new PartDefinition{Name="Тонкая труба",Kind=PartKind.Pipe,Pipe=new PipeShape{OuterDiameter=100,Thickness=.01,Length=200}},frame);
+        var thinOld=ParametricProjection.Build(thin,frame,false,true).Curves;
+        var thinNew=ParametricProjection.BuildStable(thin,frame,false,true).Curves;
+        var thinRule=ViewLineOverrides.Create(thinOld.Single(c=>c.Radius==50),ViewLineMode.Hidden,true,Guid.NewGuid());
+        var thinMigrated=ViewReferenceMigration.Lines(new[]{thinRule},thinOld,thinNew);
+        Check(thinMigrated.All(r=>r.SourceKey.EndsWith("rim:0")),"legacy outer rim never migrates to nearby inner rim below sagitta tolerance");
+        var exactStable=ParametricProjection.BuildStable(new AssemblyMark{Parts=thin.Parts,Instances=thin.Instances},frame,false,true);
+        Check(exactStable.Curves.Any(c=>c.Circular&&c.Radius==50&&Math.Abs(c.Sweep-2*Math.PI)<1e-7),"stable physical keys retain exact full circular pipe rims");
+        var slitScene=new AssemblyMark();
+        slitScene.AddPart(new PartDefinition{Name="Труба",Kind=PartKind.Pipe,Pipe=new PipeShape{OuterDiameter=100,Thickness=5,Length=200}},frame);
+        slitScene.AddPart(new PartDefinition{Name="Лист 1",Position="1",Kind=PartKind.RectangularPlate,Plate=new RectangularPlateShape{Length=100,Width=200,Thickness=10}},new RigidPlacement{Origin=new Vector3(-100,-100,220)});
+        slitScene.AddPart(new PartDefinition{Name="Лист 2",Position="2",Kind=PartKind.RectangularPlate,Plate=new RectangularPlateShape{Length=100,Width=200,Thickness=10}},new RigidPlacement{Origin=new Vector3(.01,-100,220)});
+        var preciseSlit=ParametricProjection.BuildStable(slitScene,frame).Curves.Where(c=>c.Circular&&Math.Abs(c.Radius-50)<1e-6).Sum(c=>c.Sweep);
+        Check(Math.Abs(preciseSlit-2*Math.Asin(.01/50))<1e-7,"stable identity pipeline preserves narrow exact visible slit");
         Console.WriteLine(checks+" stabilization checks passed");
     }
 }

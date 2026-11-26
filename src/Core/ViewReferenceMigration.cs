@@ -35,7 +35,9 @@ namespace KotNode.Core
             var old=oldCurves.Where(x=>x.InstanceId==instance&&x.SourceKey==key).ToList();
             if(old.Count==0)throw Failure();
             var spans=new List<Span>();
-            foreach(var c in newCurves.Where(x=>x.InstanceId==instance&&ViewLineOverrides.HasSource(x)))
+            var candidates=newCurves.Where(x=>x.InstanceId==instance&&ViewLineOverrides.HasSource(x))
+                .SelectMany(c=>c.Circular?Enumerable.Range(0,24).Select(i=>c.Piece((double)i/24,(double)(i+1)/24)):new[]{c});
+            foreach(var c in candidates)
             {
                 var samples=new[]{c.At(0),c.At(.5),c.At(1)};
                 if(!samples.All(p=>old.Any(x=>ViewLineOverrides.DistanceToCurve(x,p.X,p.Y,out _,out _,out _)<=Tol)))continue;
@@ -51,6 +53,19 @@ namespace KotNode.Core
                 if(Math.Abs(a-b)>1e-10)spans.Add(new Span{Old=source,New=c,OldFrom=a,OldTo=b});
             }
             if(spans.Count==0)throw Failure();
+            if(old.All(c=>c.Circular))
+            {
+                // Facet endpoints lie on their physical circle. Distinguish outer
+                // and inner rims even when wall thickness is below tessellation
+                // tolerance; proximity alone must never select both rings.
+                var ranks=spans.GroupBy(s=>s.New.SourceKey).Select(g=>new{
+                    Key=g.Key,Error=g.Min(s=>new[]{s.New.At(0),s.New.At(1)}.Sum(p=>
+                        Math.Abs(Math.Sqrt((p.X-s.Old.X0)*(p.X-s.Old.X0)+(p.Y-s.Old.Y0)*(p.Y-s.Old.Y0))-s.Old.Radius)))
+                }).ToList();
+                double best=ranks.Min(x=>x.Error);
+                var keys=new HashSet<string>(ranks.Where(x=>x.Error<=best+1e-7).Select(x=>x.Key));
+                spans.RemoveAll(s=>!keys.Contains(s.New.SourceKey));
+            }
             return spans;
         }
         static List<ViewLineOverride> Ranges(Guid instance,string key,double from,double to,IList<ParametricProjection.Curve2> old,IList<ParametricProjection.Curve2> current)
@@ -87,6 +102,66 @@ namespace KotNode.Core
                     else merged.Add(p);
                 }
             if(merged.Count==0)throw Failure();
+            return merged;
+        }
+        // Keep exact analytic geometry where available, but attach only the common
+        // physical source identities. Other shapes use the same identities directly.
+        public static List<ParametricProjection.Curve2> Project(IList<ParametricProjection.Curve2> exact,IList<ParametricProjection.Curve2> stable)
+        {
+            var result=new List<ParametricProjection.Curve2>();
+            foreach(var c in exact)
+            {
+                var spans=Match(c.InstanceId,c.SourceKey,exact,stable);
+                double from=Math.Min(c.SourceFrom,c.SourceTo),to=Math.Max(c.SourceFrom,c.SourceTo);
+                var cuts=new List<double>{from,to};
+                foreach(var span in spans)
+                {
+                    cuts.Add(Math.Max(from,Math.Min(to,span.OldFrom)));
+                    cuts.Add(Math.Max(from,Math.Min(to,span.OldTo)));
+                }
+                var sorted=cuts.Distinct().OrderBy(x=>x).ToList();
+                for(int i=1;i<sorted.Count;i++)
+                {
+                    double lo=sorted[i-1],hi=sorted[i];if(hi-lo<=1e-10)continue;
+                    double mid=(lo+hi)/2;
+                    var point=c.At((mid-c.SourceFrom)/(c.SourceTo-c.SourceFrom));
+                    var matches=spans.Where(x=>mid>=Math.Min(x.OldFrom,x.OldTo)-1e-9&&mid<=Math.Max(x.OldFrom,x.OldTo)+1e-9).ToList();
+                    if(matches.Count==0)
+                    {
+                        // Analytic extrema may extend less than one sagitta beyond
+                        // the polygon. Keep the exact endpoint on the nearest rim.
+                        matches=spans.Where(x=>ViewLineOverrides.DistanceToCurve(x.New,point.X,point.Y,out _,out _,out _)<=Tol).ToList();
+                        if(matches.Count==0)throw Failure();
+                    }
+                    var span=matches.OrderBy(x=>ViewLineOverrides.DistanceToCurve(x.New,point.X,point.Y,out _,out _,out _))
+                        .ThenBy(x=>x.New.SourceKey,StringComparer.Ordinal).First();
+                    double a=(lo-c.SourceFrom)/(c.SourceTo-c.SourceFrom),b=(hi-c.SourceFrom)/(c.SourceTo-c.SourceFrom);
+                    var piece=c.Piece(Math.Min(a,b),Math.Max(a,b));
+                    double u=(lo-span.OldFrom)/(span.OldTo-span.OldFrom),v=(hi-span.OldFrom)/(span.OldTo-span.OldFrom);
+                    piece.SourceKey=span.New.SourceKey;
+                    piece.SourceFrom=Math.Max(0,Math.Min(1,span.New.SourceFrom+(span.New.SourceTo-span.New.SourceFrom)*u));
+                    piece.SourceTo=Math.Max(0,Math.Min(1,span.New.SourceFrom+(span.New.SourceTo-span.New.SourceFrom)*v));
+                    result.Add(piece);
+                }
+            }
+
+            // Restore full native circles (and their exact radii), not independent
+            // facet arcs. Source direction can oppose the view's CCW direction.
+            var merged=new List<ParametricProjection.Curve2>();
+            foreach(var group in result.GroupBy(c=>Tuple.Create(c.InstanceId,c.SourceKey,c.Hidden,c.Cut)))
+            {
+                var list=group.ToList();var first=list[0];
+                if(list.All(c=>c.Circular)&&Math.Abs(list.Sum(c=>c.Sweep)-2*Math.PI)<1e-6)
+                {
+                    var seam=list.OrderBy(c=>Math.Abs(c.SourceFrom)).First();
+                    var circle=Json.Copy(first);circle.Start=seam.Start;circle.Sweep=2*Math.PI;
+                    bool forward=first.SourceTo>first.SourceFrom;
+                    circle.SourceFrom=forward?0:1;circle.SourceTo=forward?1:0;
+                    if(!forward)circle.Start=seam.Start+seam.Sweep;
+                    merged.Add(circle);
+                }
+                else merged.AddRange(list);
+            }
             return merged;
         }
         public static List<ViewLineOverride> Lines(IEnumerable<ViewLineOverride> lines,IList<ParametricProjection.Curve2> old,IList<ParametricProjection.Curve2> current)

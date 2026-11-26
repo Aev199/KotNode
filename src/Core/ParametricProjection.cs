@@ -302,7 +302,37 @@ namespace KotNode.Core
         // as the exact legacy geometry oracle and for explicit reference migration.
         // Curved spatial profiles have a maximum 0.05 mm tessellation sagitta.
         public static Result BuildStable(AssemblyMark mark,RigidPlacement view,bool section=false,bool showHidden=false)
-            =>SpatialProjection.Build(mark,view,section,showHidden);
+        {
+            var stable=SpatialProjection.Build(mark,view,section,true);
+            // Geometry optimization must never choose the identity scheme. The
+            // spatial physical keys stay the same when an unrelated shape is added.
+            if(mark.Parts.All(p=>p.Kind==PartKind.Pipe||p.Kind==PartKind.RectangularPlate))
+            {
+                try
+                {
+                    var exact=Build(mark,view,section,true);
+                    if(exact.Curves.Count>0&&exact.Curves.All(c=>c.SourceKey!=null&&c.SourceKey.StartsWith("analytic:",StringComparison.Ordinal)))
+                    {
+                        var curves=ViewReferenceMigration.Project(exact.Curves,stable.Curves);
+                        var sections=new List<SectionArea>();
+                        foreach(var area in exact.Sections)
+                        {
+                            var loops=new List<List<Curve2>>();
+                            foreach(var loop in area.Loops)loops.Add(ViewReferenceMigration.Project(loop,stable.Curves));
+                            sections.Add(new SectionArea{InstanceId=area.InstanceId,Loops=loops});
+                        }
+                        stable.Curves=curves;stable.Sections=sections;
+                    }
+                }
+                catch(InvalidDataException)
+                {
+                    // The analytic optimizer cannot handle every spatial case.
+                    // Its rejection changes geometry tolerance, never source keys.
+                }
+            }
+            if(!showHidden)stable.Curves=stable.Curves.Where(c=>!c.Hidden).ToList();
+            return stable;
+        }
 
         public static Result Build(AssemblyMark mark,RigidPlacement view,bool section=false,bool showHidden=false)
         {

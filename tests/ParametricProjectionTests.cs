@@ -35,7 +35,7 @@ static class ParametricProjectionTests
         Rejected(()=>RigidPlacement.FromThreePoints(a3,a3,c3),"coincident plane points rejected");
         Rejected(()=>RigidPlacement.FromThreePoints(a3,b3,new Vector3(1020,2000,3020)),"collinear plane points rejected");
         var m=Mark();m.AddPart(Pipe(),At(0,0,0));
-        var axial=ParametricProjection.Build(m,At(0,0,0),false,true);
+        var axial=ParametricProjection.BuildStable(m,At(0,0,0),false,true);
         Check(axial.Curves.Count==2,"axial hollow pipe has two circular boundaries");
         var rim=axial.Curves.Single(c=>Math.Abs(c.Radius-50)<1e-6);
         Check(ViewLineOverrides.HasSource(rim),"analytic rim has semantic identity");
@@ -56,7 +56,7 @@ static class ParametricProjectionTests
         Near(ViewLineOverrides.HiddenLineScale(1000,20,2,4),10,"long line nominal dash scale");
         var suppress=ViewLineOverrides.Create(rim,ViewLineMode.Suppressed,true,batch);
         var resizeRim=Json.Copy(m);resizeRim.Parts[0].Pipe.OuterDiameter=120;
-        var newRim=ParametricProjection.Build(resizeRim,At(0,0,0),false,true);
+        var newRim=ParametricProjection.BuildStable(resizeRim,At(0,0,0),false,true);
         var filtered=ViewLineOverrides.Apply(newRim.Curves,new[]{suppress},true,out var unmatched);
         Check(unmatched==0&&filtered.Count==1&&Math.Abs(filtered[0].Radius-50)<1e-6,"suppressed outer rim follows resized pipe, not equal radius inner rim");
         var fragment=ViewLineOverrides.Create(rim,ViewLineMode.Hidden,false,batch);
@@ -68,71 +68,71 @@ static class ParametricProjectionTests
         changed=ViewLineOverrides.Apply(newRim.Curves,new[]{fragment,restored},false,out unmatched);
         Check(!changed.Any(c=>c.Hidden),"later auto rule restores default");
         var replacement=Mark();replacement.AddPart(Pipe(),At(0,0,0));
-        var other=ViewLineOverrides.Apply(ParametricProjection.Build(replacement,At(0,0,0)).Curves,new[]{suppress},true,out unmatched);
+        var other=ViewLineOverrides.Apply(ParametricProjection.BuildStable(replacement,At(0,0,0)).Curves,new[]{suppress},true,out unmatched);
         Check(unmatched==1&&other.Count==2,"correction never migrates to another instance");
         Near(ArcSum(axial,50),2*Math.PI,"outer circle is complete");Near(ArcSum(axial,40),2*Math.PI,"bore circle is complete");
         Check(!axial.Curves.Any(c=>c.Hidden),"front rim dominates coincident rear rim");
         var front=new RigidPlacement{AxisX=new Vector3(1,0,0),AxisY=new Vector3(0,0,1)};
-        var side=ParametricProjection.Build(m,front,false,true);
+        var side=ParametricProjection.BuildStable(m,front,false,true);
         Near(side.Curves.Where(c=>!c.Hidden).Sum(Length),600,"side visible perimeter");
         Near(side.Curves.Where(c=>c.Hidden).Sum(Length),400,"two hidden inner generatrices");
         m.AddPart(Plate(60,120,10),At(0,-60,220));
-        var covered=ParametricProjection.Build(m,At(0,0,0),false,true);
+        var covered=ParametricProjection.BuildStable(m,At(0,0,0),false,true);
         Near(ArcSum(covered,50),Math.PI,"front plate hides exactly half the outer rim");
         Near(ArcSum(covered,50,true),Math.PI,"covered half is hidden");
         Near(ArcSum(covered,40),Math.PI,"front plate hides exactly half the bore rim");
-        var noHidden=ParametricProjection.Build(m,At(0,0,0));
+        var noHidden=ParametricProjection.BuildStable(m,At(0,0,0));
         Check(!noHidden.Curves.Any(c=>c.Hidden),"hidden-lines switch filters obscured parts");
         // Two clipping plates on either side leave a narrow real visible arc.
         var narrow=Mark();narrow.AddPart(Pipe(),At(0,0,0));
         narrow.AddPart(Plate(100,200,10),At(-100,-100,220));
         narrow.AddPart(Plate(100,200,10),At(.01,-100,220));
-        var slit=ParametricProjection.Build(narrow,At(0,0,0));
+        var slit=ParametricProjection.BuildStable(narrow,At(0,0,0));
         Near(ArcSum(slit,50),2*Math.Asin(.01/50),"narrow visible slit survives exact boundary splitting");
         var ring=Mark();ring.AddPart(Pipe(),At(0,0,-100));
         ring.AddPart(Plate(10,10,10),At(-5,-5,-40)); // behind plane, inside the hollow core
         ring.AddPart(Plate(20,20,10),At(-10,-10,20)); // in front of plane, must disappear
-        var cut=ParametricProjection.Build(ring,At(0,0,0),true);
+        var cut=ParametricProjection.BuildStable(ring,At(0,0,0),true);
         Check(cut.Sections.Count==1&&cut.Sections[0].Loops.Count==2,"cross cut is an annular hatch with a hole");
         Near(cut.Curves.Where(c=>!c.Circular&&!c.Cut).Sum(Length),40,"geometry behind section survives in the bore");
         Near(ArcSum(cut,50),2*Math.PI,"complete circular cut boundary");
         var longitudinal=Mark();longitudinal.AddPart(Pipe(),At(0,0,0));var sourceBefore=Json.Write(longitudinal);
-        var longCut=ParametricProjection.Build(longitudinal,front,true);
+        var longCut=ParametricProjection.BuildStable(longitudinal,front,true);
         Check(longCut.Sections.Count==2,"longitudinal cut has two separate pipe walls");
         Near(longCut.Sections.Sum(Area),4000,"longitudinal wall areas are exact");
         var offset=new RigidPlacement{Origin=new Vector3(0,45,0),AxisX=front.AxisX,AxisY=front.AxisY};
-        var offsetCut=ParametricProjection.Build(longitudinal,offset,true);
+        var offsetCut=ParametricProjection.BuildStable(longitudinal,offset,true);
         Check(offsetCut.Sections.Count==1,"offset cut outside bore has one connected strip");
         Near(offsetCut.Sections.Sum(Area),400*Math.Sqrt(2500-2025),"offset section width is analytic");
         var tangent=new RigidPlacement{Origin=new Vector3(0,50,0),AxisX=front.AxisX,AxisY=front.AxisY};
-        Check(ParametricProjection.Build(longitudinal,tangent,true).Sections.Count==0,"tangent plane produces no hatch");
+        Check(ParametricProjection.BuildStable(longitudinal,tangent,true).Sections.Count==0,"tangent plane produces no hatch");
         var box=Mark();box.AddPart(Plate(20,30,40),At(-10,-15,-20));
-        var boxCut=ParametricProjection.Build(box,At(0,0,0),true);
+        var boxCut=ParametricProjection.BuildStable(box,At(0,0,0),true);
         Near(boxCut.Sections.Sum(Area),600,"plate cut area");Near(boxCut.Curves.Sum(Length),100,"coincident cut and silhouette are deduplicated");
         var moved=Mark();moved.AddPart(Pipe(),At(1000000,-2000000,3000000));
-        var movedView=ParametricProjection.Build(moved,At(1000000,-2000000,3000000));
+        var movedView=ParametricProjection.BuildStable(moved,At(1000000,-2000000,3000000));
         Near(ArcSum(movedView,50),2*Math.PI,"large world coordinates removed by view frame");
         var resized=Json.Copy(longitudinal);resized.Parts[0].Pipe.OuterDiameter=120;
-        var bigger=ParametricProjection.Build(resized,At(0,0,0));
+        var bigger=ParametricProjection.BuildStable(resized,At(0,0,0));
         Near(ArcSum(bigger,60),2*Math.PI,"parameter change recalculates outer radius");
         Near(ArcSum(bigger,50),2*Math.PI,"wall thickness retained on resize");
         var oblique=new RigidPlacement{AxisX=new Vector3(Math.Sqrt(.5),0,Math.Sqrt(.5)),AxisY=new Vector3(0,1,0)};
-        Check(ParametricProjection.Build(longitudinal,oblique,false,true).Curves.Count>0,"oblique pipe view produces contours");
+        Check(ParametricProjection.BuildStable(longitudinal,oblique,false,true).Curves.Count>0,"oblique pipe view produces contours");
         var rotated=Mark();rotated.AddPart(Plate(20,30,40),new RigidPlacement{Origin=new Vector3(0,0,-20),AxisX=new Vector3(Math.Sqrt(.5),Math.Sqrt(.5),0),AxisY=new Vector3(-Math.Sqrt(.5),Math.Sqrt(.5),0)});
-        var rotatedCut=ParametricProjection.Build(rotated,At(0,0,0),true);
+        var rotatedCut=ParametricProjection.BuildStable(rotated,At(0,0,0),true);
         Near(rotatedCut.Sections.Sum(Area),600,"rotated plate section has exact area");
         Near(rotatedCut.Curves.Sum(Length),100,"rotated plate projected perimeter");
         var coveredRotated=Mark();coveredRotated.AddPart(Plate(20,20,2),At(-10,-10,0));
         coveredRotated.AddPart(Plate(100,100,2),new RigidPlacement{Origin=new Vector3(0,-70,10),AxisX=new Vector3(Math.Sqrt(.5),Math.Sqrt(.5),0),AxisY=new Vector3(-Math.Sqrt(.5),Math.Sqrt(.5),0)});
-        Check(ParametricProjection.Build(coveredRotated,At(0,0,0),false,true).Curves.Any(c=>c.Hidden),"rotated cover hides rear plate");
-        var obliqueCut=ParametricProjection.Build(longitudinal,new RigidPlacement{Origin=new Vector3(0,0,100),AxisX=oblique.AxisX,AxisY=oblique.AxisY},true);
+        Check(ParametricProjection.BuildStable(coveredRotated,At(0,0,0),false,true).Curves.Any(c=>c.Hidden),"rotated cover hides rear plate");
+        var obliqueCut=ParametricProjection.BuildStable(longitudinal,new RigidPlacement{Origin=new Vector3(0,0,100),AxisX=oblique.AxisX,AxisY=oblique.AxisY},true);
         Check(obliqueCut.Sections.Count==1&&obliqueCut.Sections[0].Loops.Count==2,"oblique pipe section retains bore");
         var bad=Mark();bad.AddPart(Plate(10,10,10),At(0,0,0));bad.AddPart(Plate(10,10,10),At(5,5,5));
         Rejected(()=>ParametricProjection.Build(bad,At(0,0,0)),"penetrating plates rejected");
         var intrusion=Mark();intrusion.AddPart(Pipe(),At(0,0,0));intrusion.AddPart(Plate(10,10,10),At(45,0,10));
         Rejected(()=>ParametricProjection.Build(intrusion,At(0,0,0)),"plate penetrating pipe wall rejected");
         var unsupported=Mark();unsupported.AddPart(new PartDefinition{Name="Криволинейный лист",Kind=PartKind.CurvedPlate,CurvedPlate=new CurvedPlateShape{InnerRadius=50,Thickness=10,Length=100,AngleRadians=1}},At(0,0,0));
-        Check(ParametricProjection.Build(unsupported,At(0,0,0)).Curves.Count>0,"curved plate uses common spatial pipeline");
+        Check(ParametricProjection.BuildStable(unsupported,At(0,0,0)).Curves.Count>0,"curved plate uses common spatial pipeline");
         Check(Json.Write(longitudinal)==sourceBefore,"projection leaves source parameters and identities unchanged");
         foreach(var frame in new[]{
             new RigidPlacement{AxisX=new Vector3(1,0,0),AxisY=new Vector3(0,-1,0)},
@@ -140,13 +140,13 @@ static class ParametricProjectionTests
             new RigidPlacement{AxisX=new Vector3(0,1,0),AxisY=new Vector3(0,0,1)},
             new RigidPlacement{AxisX=new Vector3(0,-1,0),AxisY=new Vector3(0,0,1)}})
         {
-            var projection=ParametricProjection.Build(longitudinal,frame,false,true);
+            var projection=ParametricProjection.BuildStable(longitudinal,frame,false,true);
             Near(projection.Curves.Where(c=>!c.Hidden).Sum(Length),frame.AxisY.Y==-1?2*Math.PI*90:600,"opposite and side directions retain projected outline");
         }
         var spin=new RigidPlacement{AxisX=new Vector3(Math.Sqrt(.5),Math.Sqrt(.5),0),AxisY=new Vector3(-Math.Sqrt(.5),Math.Sqrt(.5),0)};
-        Near(ArcSum(ParametricProjection.Build(longitudinal,spin),50),2*Math.PI,"pipe rotation about its own axis does not alter its shape");
+        Near(ArcSum(ParametricProjection.BuildStable(longitudinal,spin),50),2*Math.PI,"pipe rotation about its own axis does not alter its shape");
         var touching=Mark();touching.AddPart(Pipe(),At(0,0,0));touching.AddPart(Plate(20,20,10),At(50,-10,10));
-        Check(ParametricProjection.Build(touching,At(0,0,0)).Curves.Count>0,"tangent plate contact is supported");
+        Check(ParametricProjection.BuildStable(touching,At(0,0,0)).Curves.Count>0,"tangent plate contact is supported");
         // --- Stage 4.1 / Generator 15: 100% spatial SourceKey coverage, chaining, geometric picking, faceted fragments ---
         var polyMark=Mark();
         var polyDef=new PartDefinition
@@ -161,21 +161,21 @@ static class ParametricProjectionTests
             }
         };
         polyMark.AddPart(polyDef,At(0,0,-6));
-        var polyTop=ParametricProjection.Build(polyMark,At(0,0,0),false,true);
+        var polyTop=ParametricProjection.BuildStable(polyMark,At(0,0,0),false,true);
         Check(polyTop.Curves.Count>0&&polyTop.Curves.All(ViewLineOverrides.HasSource),"polygon plate with holes has 100% semantic keys");
-        var polyOblique=ParametricProjection.Build(polyMark,oblique,false,true);
+        var polyOblique=ParametricProjection.BuildStable(polyMark,oblique,false,true);
         Check(polyOblique.Curves.Count>0&&polyOblique.Curves.All(ViewLineOverrides.HasSource),"oblique polygon plate has 100% semantic keys");
-        var polyCut=ParametricProjection.Build(polyMark,At(0,0,0),true,true);
+        var polyCut=ParametricProjection.BuildStable(polyMark,At(0,0,0),true,true);
         Check(polyCut.Curves.Count>0&&polyCut.Curves.All(ViewLineOverrides.HasSource),"polygon plate section cut has 100% semantic keys");
-        var obliquePipe=ParametricProjection.Build(longitudinal,oblique,false,true);
+        var obliquePipe=ParametricProjection.BuildStable(longitudinal,oblique,false,true);
         Check(obliquePipe.Curves.Count>0&&obliquePipe.Curves.All(ViewLineOverrides.HasSource),"oblique pipe including smooth silhouettes has 100% semantic keys");
-        var obliquePipeCut=ParametricProjection.Build(longitudinal,new RigidPlacement{Origin=new Vector3(0,0,100),AxisX=oblique.AxisX,AxisY=oblique.AxisY},true,true);
+        var obliquePipeCut=ParametricProjection.BuildStable(longitudinal,new RigidPlacement{Origin=new Vector3(0,0,100),AxisX=oblique.AxisX,AxisY=oblique.AxisY},true,true);
         Check(obliquePipeCut.Curves.Count>0&&obliquePipeCut.Curves.All(ViewLineOverrides.HasSource),"oblique pipe section has 100% semantic keys");
         var curvedMark=Mark();
         curvedMark.AddPart(new PartDefinition{Name="Накладка",Kind=PartKind.CurvedPlate,CurvedPlate=new CurvedPlateShape{InnerRadius=100,Thickness=12,Length=200,AngleRadians=Math.PI/2}},At(0,0,0));
-        var curvedTop=ParametricProjection.Build(curvedMark,At(0,0,0),false,true);
+        var curvedTop=ParametricProjection.BuildStable(curvedMark,At(0,0,0),false,true);
         Check(curvedTop.Curves.Count>0&&curvedTop.Curves.All(ViewLineOverrides.HasSource),"curved plate top view has 100% semantic keys");
-        var curvedSide=ParametricProjection.Build(curvedMark,front,false,true);
+        var curvedSide=ParametricProjection.BuildStable(curvedMark,front,false,true);
         Check(curvedSide.Curves.Count>0&&curvedSide.Curves.All(ViewLineOverrides.HasSource),"curved plate side view has 100% semantic keys");
         // Chaining faceted curves & geometric picking + Fragment across multiple facets
         var curvedChains=ViewLineOverrides.Chain(curvedTop.Curves);
@@ -192,7 +192,7 @@ static class ParametricProjectionTests
         Check(unmatchedFaceted==0&&afterFacetedHidden.Any(c=>c.Hidden),"manual hidden fragment on faceted arc is preserved even when showHidden=false");
         // Resizing curved plate (which changes facet count!) must keep the override matched
         var resizedCurved=Json.Copy(curvedMark);resizedCurved.Parts[0].CurvedPlate.InnerRadius=160;
-        var resizedCurvedView=ParametricProjection.Build(resizedCurved,At(0,0,0),false,true);
+        var resizedCurvedView=ParametricProjection.BuildStable(resizedCurved,At(0,0,0),false,true);
         var afterResizeFaceted=ViewLineOverrides.Apply(resizedCurvedView.Curves,facetedRules,false,out unmatchedFaceted);
         Check(unmatchedFaceted==0&&afterResizeFaceted.Any(c=>c.Hidden),"faceted override survives radius change and facet-count change");
         // Closed faceted loop (round hole) chains into full loop and supports Short/Long wrap-around fragment
@@ -212,13 +212,13 @@ static class ParametricProjectionTests
         var beamMark=Mark();
         var beam30=BeamCatalog.Create("30Б2",1000);
         beamMark.AddPart(new PartDefinition{Name="Двутавр 30Б2",Kind=PartKind.IBeam,IBeam=beam30},At(0,0,0));
-        var beamTop=ParametricProjection.Build(beamMark,At(0,0,0),false,true);
+        var beamTop=ParametricProjection.BuildStable(beamMark,At(0,0,0),false,true);
         Check(beamTop.Curves.Count>0&&beamTop.Curves.All(ViewLineOverrides.HasSource),"filleted I-beam 30Б2 axial view has 100% semantic keys");
-        var beamSide=ParametricProjection.Build(beamMark,front,false,true);
+        var beamSide=ParametricProjection.BuildStable(beamMark,front,false,true);
         Check(beamSide.Curves.Count>0&&beamSide.Curves.All(ViewLineOverrides.HasSource),"filleted I-beam 30Б2 side view has 100% semantic keys");
-        var beamOblique=ParametricProjection.Build(beamMark,oblique,false,true);
+        var beamOblique=ParametricProjection.BuildStable(beamMark,oblique,false,true);
         Check(beamOblique.Curves.Count>0&&beamOblique.Curves.All(ViewLineOverrides.HasSource),"filleted I-beam 30Б2 oblique view has 100% semantic keys");
-        var beamCut=ParametricProjection.Build(beamMark,At(0,0,500),true,true);
+        var beamCut=ParametricProjection.BuildStable(beamMark,At(0,0,500),true,true);
         double expectedBeamArea=2*beam30.Width*beam30.FlangeThickness+(beam30.Height-2*beam30.FlangeThickness)*beam30.WebThickness+(4-Math.PI)*beam30.RootRadius*beam30.RootRadius;
         Check(beamCut.Sections.Count==1&&Math.Abs(Area(beamCut.Sections[0])-expectedBeamArea)<3.5,"filleted I-beam cross section area matches nominal geometry ("+Area(beamCut.Sections[0])+" vs "+expectedBeamArea+")");
         Check(beamCut.Curves.All(ViewLineOverrides.HasSource),"filleted I-beam section has 100% semantic keys");
@@ -228,15 +228,15 @@ static class ParametricProjectionTests
         var filletRule=ViewLineOverrides.CreateForChain(filletChain,ViewLineMode.Hidden,false,batch);
         var beam40Mark=Json.Copy(beamMark);
         beam40Mark.Parts[0].IBeam=BeamCatalog.Create("40Ш2",1000);
-        var beam40Top=ParametricProjection.Build(beam40Mark,At(0,0,0),false,true);
+        var beam40Top=ParametricProjection.BuildStable(beam40Mark,At(0,0,0),false,true);
         var afterBeamResize=ViewLineOverrides.Apply(beam40Top.Curves,filletRule,false,out var unmatchedBeam);
         Check(unmatchedBeam==0&&afterBeamResize.Any(c=>c.Hidden),"I-beam fillet override survives profile change 30Б2 -> 40Ш2");
         // Straight, L-bent, U-bent, and 3D spatially-bent rebar
         var straightBarMark=Mark();
         straightBarMark.AddPart(new PartDefinition{Name="Стержень прямой",Kind=PartKind.Rebar,Rebar=new RebarShape{Diameter=16,Points=new List<Vector3>{new Vector3(0,0,0),new Vector3(0,0,200)}}},At(0,0,0));
-        var straightBarTop=ParametricProjection.Build(straightBarMark,At(0,0,0),false,true);
-        var straightBarSide=ParametricProjection.Build(straightBarMark,front,false,true);
-        var straightBarCut=ParametricProjection.Build(straightBarMark,At(0,0,100),true,true);
+        var straightBarTop=ParametricProjection.BuildStable(straightBarMark,At(0,0,0),false,true);
+        var straightBarSide=ParametricProjection.BuildStable(straightBarMark,front,false,true);
+        var straightBarCut=ParametricProjection.BuildStable(straightBarMark,At(0,0,100),true,true);
         Check(straightBarTop.Curves.Count>0&&straightBarTop.Curves.All(ViewLineOverrides.HasSource),"straight rebar axial view has 100% semantic keys");
         Check(straightBarSide.Curves.Count>0&&straightBarSide.Curves.All(ViewLineOverrides.HasSource),"straight rebar side view has 100% semantic keys");
         Check(straightBarCut.Sections.Count==1&&Math.Abs(Area(straightBarCut.Sections[0])-Math.PI*64)<3.0,"straight rebar cross section area matches circle ("+Area(straightBarCut.Sections[0])+")");
@@ -246,16 +246,16 @@ static class ParametricProjectionTests
             Diameter=16,
             Points=new List<Vector3>{new Vector3(0,0,0),new Vector3(0,200,0),new Vector3(200,200,0),new Vector3(200,0,0)},
             BendRadii=new List<double>{40,40}}},At(0,0,0));
-        var uBarTop=ParametricProjection.Build(uBarMark,At(0,0,0),false,true);
+        var uBarTop=ParametricProjection.BuildStable(uBarMark,At(0,0,0),false,true);
         Check(uBarTop.Curves.Count>0&&uBarTop.Curves.All(ViewLineOverrides.HasSource),"U-bent rebar top view has 100% semantic keys");
-        var uBarCut=ParametricProjection.Build(uBarMark,new RigidPlacement{Origin=new Vector3(0,100,0),AxisX=new Vector3(1,0,0),AxisY=new Vector3(0,0,1)},true,true);
+        var uBarCut=ParametricProjection.BuildStable(uBarMark,new RigidPlacement{Origin=new Vector3(0,100,0),AxisX=new Vector3(1,0,0),AxisY=new Vector3(0,0,1)},true,true);
         Check(uBarCut.Sections.Count==2&&uBarCut.Curves.All(ViewLineOverrides.HasSource),"section across both legs of U-rebar produces two cut sections with 100% keys");
         var bendChains=ViewLineOverrides.Chain(uBarTop.Curves);
         var bendSil=bendChains.First(c=>!c.Hidden&&c.SourceKey.Contains(":sil:bend:0:"));
         Check(bendSil.Segments.Count>=4,"rebar bend silhouette merges into continuous polyline chain");
         var bendRule=ViewLineOverrides.CreateForChain(bendSil,ViewLineMode.Hidden,false,batch);
         var thickerBar=Json.Copy(uBarMark);thickerBar.Parts[0].Rebar.Diameter=20;
-        var thickerView=ParametricProjection.Build(thickerBar,At(0,0,0),false,true);
+        var thickerView=ParametricProjection.BuildStable(thickerBar,At(0,0,0),false,true);
         var afterBarResize=ViewLineOverrides.Apply(thickerView.Curves,bendRule,false,out var unmatchedBar);
         Check(unmatchedBar==0&&afterBarResize.Any(c=>c.Hidden),"rebar bend override survives diameter change Ø16 -> Ø20");
         var spatialBarMark=Mark();
@@ -264,14 +264,14 @@ static class ParametricProjectionTests
             Points=new List<Vector3>{new Vector3(0,0,0),new Vector3(150,0,0),new Vector3(150,150,0),new Vector3(150,150,150)},
             BendRadii=new List<double>{50,50}}},At(0,0,0));
         spatialBarMark.AddPart(Plate(80,80,10),At(110,110,180));
-        var spatialBarView=ParametricProjection.Build(spatialBarMark,oblique,false,true);
+        var spatialBarView=ParametricProjection.BuildStable(spatialBarMark,oblique,false,true);
         Check(spatialBarView.Curves.Count>0&&spatialBarView.Curves.All(ViewLineOverrides.HasSource),"3D spatially bent rebar with occluding plate has 100% semantic keys");
-        Check(ParametricProjection.Build(spatialBarMark,At(0,0,0),false,true).Curves.Any(c=>c.Hidden),"plate occludes rebar behind it");
+        Check(ParametricProjection.BuildStable(spatialBarMark,At(0,0,0),false,true).Curves.Any(c=>c.Hidden),"plate occludes rebar behind it");
         // --- Iteration 4.1.B / Generator 17: Parametric Weld Overlays (NAWELD) ---
         var weldBatch=Guid.NewGuid();
         var plateMark=Mark();
         plateMark.AddPart(Plate(200,100,12),At(0,0,0));
-        var plateView=ParametricProjection.Build(plateMark,At(0,0,0),false,true);
+        var plateView=ParametricProjection.BuildStable(plateMark,At(0,0,0),false,true);
         var plateChains=ViewLineOverrides.Chain(plateView.Curves);
         var bottomEdge=ViewLineOverrides.Pick(plateChains,100,0,5.0).Chain;
         Check(ViewWelds.SideFromPoint(bottomEdge,100,15)==ViewWeldSide.Left,"weld side above horizontal +X edge is Left");
@@ -288,7 +288,7 @@ static class ParametricProjectionTests
         Check(unmatchedW==0&&hiddenStrokes.Count>=2&&hiddenStrokes.All(s=>s.Hidden),"hidden weld strokes marked hidden");
         // Resizing plate lengthens weld automatically with zero unmatched entries
         var longerPlate=Json.Copy(plateMark);longerPlate.Parts[0].Plate.Length=400;
-        var longerPlateView=ParametricProjection.Build(longerPlate,At(0,0,0),false,true);
+        var longerPlateView=ParametricProjection.BuildStable(longerPlate,At(0,0,0),false,true);
         var longerSiteStrokes=ViewWelds.Build(longerPlateView.Curves,siteWelds,10,out unmatchedW);
         Check(unmatchedW==0&&longerSiteStrokes.Count>siteStrokes.Count,"weld scales automatically when plate length doubles");
         // Weld along faceted curved plate arc follows resized radius
@@ -405,7 +405,7 @@ static class ParametricProjectionTests
             var instFam=NodeFamilyLibrary.Instantiate(fam,"Т-"+fam.Mark.Code,fam.Name);
             foreach(var vt in instFam.Views)
             {
-                var proj=ParametricProjection.Build(instFam.Mark,vt.Frame,vt.IsSection,true);
+                var proj=ParametricProjection.BuildStable(instFam.Mark,vt.Frame,vt.IsSection,true);
                 Check(proj.Curves.Count>0&&proj.Curves.All(ViewLineOverrides.HasSource),"family '"+fam.Name+"' view '"+vt.Name+"' builds with 100% semantic keys");
             }
             Check(AssemblyReporting.BuildMarkSpec(instFam.Mark).TotalMassKg>0,"family '"+fam.Name+"' produces positive spec mass");
@@ -429,10 +429,10 @@ static class ParametricProjectionTests
         var mark=Mark();mark.AddPart(Pipe(),At(0,0,-100));mark.AddPart(Plate(60,120,10),At(0,-60,120));mark.AddPart(Plate(10,10,10),At(-5,-5,-40));
         var side=new RigidPlacement{AxisX=new Vector3(1,0,0),AxisY=new Vector3(0,0,1)};
         var before=Json.Write(mark);
-        var scenes=new[]{new{Name="Вид вдоль трубы",Result=ParametricProjection.Build(mark,At(0,0,0),false,true)},
-            new{Name="Вид сбоку",Result=ParametricProjection.Build(mark,side,false,true)},
-            new{Name="Поперечный разрез: пластина за плоскостью видна в отверстии",Result=ParametricProjection.Build(mark,At(0,0,0),true,true)},
-            new{Name="Продольный разрез",Result=ParametricProjection.Build(mark,side,true,true)}};
+        var scenes=new[]{new{Name="Вид вдоль трубы",Result=ParametricProjection.BuildStable(mark,At(0,0,0),false,true)},
+            new{Name="Вид сбоку",Result=ParametricProjection.BuildStable(mark,side,false,true)},
+            new{Name="Поперечный разрез: пластина за плоскостью видна в отверстии",Result=ParametricProjection.BuildStable(mark,At(0,0,0),true,true)},
+            new{Name="Продольный разрез",Result=ParametricProjection.BuildStable(mark,side,true,true)}};
         if(before!=Json.Write(mark))throw new Exception("Projection mutated source model");
         File.WriteAllText(path,System.Text.Json.JsonSerializer.Serialize(scenes,new System.Text.Json.JsonSerializerOptions{WriteIndented=true}));
     }

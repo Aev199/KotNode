@@ -595,6 +595,7 @@ namespace KotNode.Core
                     Sections(own.SelectMany(f=>CutFace(f,i.Id)).ToList(),i.Id,p,result,faces,candidates);
             }
             var unique=new Dictionary<string,ParametricProjection.Curve2>();
+            var depths=new Dictionary<string,double>();
             foreach(var s in candidates)
             {
                 var near=faces.Where(f=>Overlaps(s,f)).ToList();var cuts=new List<double>{0,1};
@@ -613,7 +614,9 @@ namespace KotNode.Core
                     bool hidden=near.Any(f=>{var z=f.Depth(m);return z.HasValue&&(!section||z.Value<=E)&&z.Value>m.Z+E;});
                     if(hidden&&!showHidden)continue;
                     var piece=new Segment(s.At(a),s.At(b),s.Id,s.Cut){SourceKey=s.SourceKey,SourceFrom=s.SourceFrom+(s.SourceTo-s.SourceFrom)*a,SourceTo=s.SourceFrom+(s.SourceTo-s.SourceFrom)*b};var key=Key(piece);var c=Curve(piece,hidden);
-                    if(!unique.TryGetValue(key,out var old)||old.Hidden&&!hidden||old.Hidden==hidden&&c.Cut&&!old.Cut)unique[key]=c;
+                    if(!unique.TryGetValue(key,out var old)||old.Hidden&&!hidden||old.Hidden==hidden&&c.Cut&&!old.Cut||
+                        old.Hidden==hidden&&old.Cut==c.Cut&&m.Z>depths[key]+E)
+                    {unique[key]=c;depths[key]=m.Z;}
                 }
             }
             result.Curves=unique.Values.ToList();return result;
