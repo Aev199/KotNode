@@ -49,15 +49,21 @@ namespace KotNode.Core
             internal List<List<Vector3>> Rings=new List<List<Vector3>>();
             // Sharp vertices, where an axial edge is a real crease rather than a facet seam.
             internal List<HashSet<int>> Sharp=new List<HashSet<int>>();
+            internal List<List<string>> EdgeKeys=new List<List<string>>();
+            internal List<List<double>> EdgeFrom=new List<List<double>>();
+            internal List<List<double>> EdgeTo=new List<List<double>>();
+            internal List<List<string>> VertexKeys=new List<List<string>>();
             internal double Length;
-            internal void Add(List<Vector3> ring,IEnumerable<int> sharp=null)
+            internal void Add(List<Vector3> ring,IEnumerable<int> sharp=null,List<string> edgeKeys=null,List<double> edgeFrom=null,List<double> edgeTo=null,List<string> vertexKeys=null)
             {
                 Rings.Add(ring);Sharp.Add(new HashSet<int>(sharp??Enumerable.Range(0,ring.Count)));
+                EdgeKeys.Add(edgeKeys);EdgeFrom.Add(edgeFrom);EdgeTo.Add(edgeTo);VertexKeys.Add(vertexKeys);
             }
         }
         static Vector3 Add(Vector3 a,Vector3 b)=>new Vector3(a.X+b.X,a.Y+b.Y,a.Z+b.Z);
         static Vector3 Sub(Vector3 a,Vector3 b)=>new Vector3(a.X-b.X,a.Y-b.Y,a.Z-b.Z);
         static Vector3 Mul(Vector3 a,double t)=>new Vector3(a.X*t,a.Y*t,a.Z*t);
+        static Vector3 Norm(Vector3 v){double l=Math.Sqrt(v.Dot(v));return l>E?Mul(v,1/l):new Vector3(0,0,0);}
         static Vector3 P(double x,double y)=>new Vector3(x,y,0);
         static double Cross(Vector3 a,Vector3 b)=>a.X*b.Y-a.Y*b.X;
         static double Dist2(Vector3 a,Vector3 b){var d=Sub(a,b);return d.Dot(d);}
@@ -74,6 +80,68 @@ namespace KotNode.Core
         {
             int n=Steps(r,angle);
             return Enumerable.Range(0,full?n:n+1).Select(i=>P(x+r*Math.Cos(angle*i/n),y+r*Math.Sin(angle*i/n))).ToList();
+        }
+        static void BuildIBeamProfile(Profile q,IBeamShape b)
+        {
+            double w=b.Width/2,h2=b.Height/2,t=b.WebThickness/2,f=b.FlangeThickness,r=b.RootRadius;
+            q.Length=b.Length;
+            var basePts=Points(-w,-h2,w,-h2,w,-h2+f,t,-h2+f,t,h2-f,w,h2-f,w,h2,-w,h2,-w,h2-f,-t,h2-f,-t,-h2+f,-w,-h2+f);
+            if(r<=E)
+            {
+                q.Add(basePts);
+                return;
+            }
+            var ring=new List<Vector3>();
+            var sharp=new List<int>();
+            var edgeKeys=new List<string>();
+            var edgeFrom=new List<double>();
+            var edgeTo=new List<double>();
+            var vertexKeys=new List<string>();
+            int nArc=Steps(r,Math.PI/2);
+            // Concave root corners in CCW order: cornerIndex -> (filletId, cx, cy, startAngle)
+            var fillets=new Dictionary<int,Tuple<int,double,double,double>>
+            {
+                {3, Tuple.Create(0, t+r, -h2+f+r, -Math.PI/2)},
+                {4, Tuple.Create(1, t+r,  h2-f-r,  Math.PI)},
+                {9, Tuple.Create(2,-t-r,  h2-f-r,  Math.PI/2)},
+                {10,Tuple.Create(3,-t-r, -h2+f+r,  0.0)}
+            };
+            Action<Vector3,bool,string,string,double,double> push=(pt,isSharp,vKey,eKey,eFrom,eTo)=>{
+                if(ring.Count>0&&Dist2(ring[ring.Count-1],pt)<=E*E)
+                {
+                    // Zero-length straight segment between adjacent fillets; update outgoing edge role.
+                    edgeKeys[edgeKeys.Count-1]=eKey;edgeFrom[edgeFrom.Count-1]=eFrom;edgeTo[edgeTo.Count-1]=eTo;
+                    if(isSharp&&!sharp.Contains(ring.Count-1))sharp.Add(ring.Count-1);
+                    return;
+                }
+                int idx=ring.Count;
+                ring.Add(pt);
+                if(isSharp)sharp.Add(idx);
+                vertexKeys.Add(vKey);
+                edgeKeys.Add(eKey);edgeFrom.Add(eFrom);edgeTo.Add(eTo);
+            };
+            for(int i=0;i<12;i++)
+            {
+                if(!fillets.TryGetValue(i,out var fi))
+                {
+                    push(basePts[i],true,"vertex:"+i,"edge:"+i,0,1);
+                    continue;
+                }
+                int fId=fi.Item1;double cx=fi.Item2,cy=fi.Item3,a0=fi.Item4;
+                for(int s=0;s<nArc;s++)
+                {
+                    double ang=a0-s*(Math.PI/2)/nArc;
+                    push(P(cx+r*Math.Cos(ang),cy+r*Math.Sin(ang)),false,"fillet:"+fId+":v","fillet:"+fId,(double)s/nArc,(double)(s+1)/nArc);
+                }
+                double endAng=a0-Math.PI/2;
+                push(P(cx+r*Math.Cos(endAng),cy+r*Math.Sin(endAng)),false,"fillet:"+fId+":v","edge:"+i,0,1);
+            }
+            if(ring.Count>1&&Dist2(ring[0],ring[ring.Count-1])<=E*E)
+            {
+                ring.RemoveAt(ring.Count-1);vertexKeys.RemoveAt(vertexKeys.Count-1);
+                edgeKeys.RemoveAt(edgeKeys.Count-1);edgeFrom.RemoveAt(edgeFrom.Count-1);edgeTo.RemoveAt(edgeTo.Count-1);
+            }
+            q.Add(ring,sharp,edgeKeys,edgeFrom,edgeTo,vertexKeys);
         }
         static Profile Shape(PartDefinition p)
         {
@@ -100,10 +168,7 @@ namespace KotNode.Core
                     foreach(var h in p.PolygonPlate.RoundHoles)q.Add(Arc(h.Radius,Tau,true,h.Center.X,h.Center.Y),new int[0]);
                     break;
                 case PartKind.IBeam:
-                    var b=p.IBeam;
-                    if(b.RootRadius>0)throw new InvalidDataException("Пространственная проекция двутавра с радиусами сопряжения ещё не реализована: "+p.Name);
-                    double w=b.Width/2,h2=b.Height/2,t=b.WebThickness/2,f=b.FlangeThickness;
-                    q.Length=b.Length;q.Add(Points(-w,-h2,w,-h2,w,-h2+f,t,-h2+f,t,h2-f,w,h2-f,w,h2,-w,h2,-w,h2-f,-t,h2-f,-t,-h2+f,-w,-h2+f));break;
+                    BuildIBeamProfile(q,p.IBeam);break;
                 default:throw new InvalidDataException("Пространственная проекция пока не поддерживает деталь: "+p.Name);
             }
             return q;
@@ -258,6 +323,13 @@ namespace KotNode.Core
         // Stable physical contour roles. Facet count is not identity.
         static void Rim(PartDefinition p,Profile profile,int ring,int j,out string key,out double from,out double to)
         {
+            if(profile.EdgeKeys[ring]!=null)
+            {
+                key=profile.EdgeKeys[ring][j];
+                from=profile.EdgeFrom[ring][j];
+                to=profile.EdgeTo[ring][j];
+                return;
+            }
             key=null;from=0;to=1;
             int n=profile.Rings[ring].Count;
             if(p.Kind==PartKind.RectangularPlate||p.Kind==PartKind.IBeam)
@@ -309,6 +381,12 @@ namespace KotNode.Core
         }
         static string AxialKey(PartDefinition p,Profile profile,int ring,int j,Vector3 bottomPt,Vector3 topPt,Vector3 bottomCenter,Vector3 topCenter)
         {
+            if(profile.VertexKeys[ring]!=null)
+            {
+                var vk=profile.VertexKeys[ring][j];
+                if(profile.Sharp[ring].Contains(j))return vk;
+                return vk+":"+SideTag(bottomPt,topPt,bottomCenter,topCenter,j);
+            }
             if(p.Kind==PartKind.RectangularPlate||p.Kind==PartKind.IBeam)return "vertex:"+j;
             if(p.Kind==PartKind.Pipe||(p.Kind==PartKind.CurvedPlate&&profile.Rings.Count==2))
                 return "sil:"+ring+":"+SideTag(bottomPt,topPt,bottomCenter,topCenter,j);
@@ -333,13 +411,154 @@ namespace KotNode.Core
             return "axial:"+ring+":"+j;
         }
         static string Source(PartDefinition p,string role)=>role==null?null:"spatial:"+p.Kind+":"+role;
+        static void AddRebar(PartInstance inst,PartDefinition part,RigidPlacement frame,bool section,List<Face> faces,List<Segment> candidates,ParametricProjection.Result result)
+        {
+            var bar=part.Rebar;bar.Validate();
+            double radius=bar.Diameter/2;
+            var pts=bar.Points;int n=pts.Count;
+            var dirs=new Vector3[n-1];
+            var trim=new double[n];var angles=new double[n];
+            for(int s=0;s<n-1;s++)dirs[s]=Norm(Sub(pts[s+1],pts[s]));
+            for(int j=1;j<n-1;j++)
+            {
+                angles[j]=Math.Acos(Math.Max(-1,Math.Min(1,dirs[j-1].Dot(dirs[j]))));
+                if(angles[j]>1e-8)trim[j]=bar.BendRadii[j-1]*Math.Tan(angles[j]/2);
+            }
+            // Build smooth centerline stations with rotation-minimizing (parallel-transport) frames.
+            var posList=new List<Vector3>{pts[0]};
+            var tanList=new List<Vector3>{dirs[0]};
+            var spanTags=new List<string>();
+            var spanU0=new List<double>();
+            var spanU1=new List<double>();
+            for(int s=0;s<n-1;s++)
+            {
+                var endPt=Sub(pts[s+1],Mul(dirs[s],trim[s+1]));
+                if(Dist2(endPt,posList[posList.Count-1])>1e-12)
+                {
+                    posList.Add(endPt);tanList.Add(dirs[s]);
+                    spanTags.Add("seg:"+s);spanU0.Add(0);spanU1.Add(1);
+                }
+                int j=s+1;
+                if(j>=n-1||angles[j]<=1e-8)continue;
+                double r=bar.BendRadii[j-1],ang=angles[j];
+                var tangent=dirs[s];
+                var normal=Norm(tangent.Cross(dirs[j]));
+                var radial=Norm(tangent.Cross(normal));
+                var startPt=Sub(pts[j],Mul(tangent,trim[j]));
+                var center=Sub(startPt,Mul(radial,r));
+                int nb=Math.Max(4,Math.Min(128,Steps(r+radius,ang)));
+                for(int step=1;step<=nb;step++)
+                {
+                    double th=ang*step/nb;
+                    var p=Add(center,Add(Mul(radial,r*Math.Cos(th)),Mul(tangent,r*Math.Sin(th))));
+                    var t=Norm(Add(Mul(radial,-Math.Sin(th)),Mul(tangent,Math.Cos(th))));
+                    posList.Add(p);tanList.Add(t);
+                    spanTags.Add("bend:"+(j-1));spanU0.Add((double)(step-1)/nb);spanU1.Add((double)step/nb);
+                }
+            }
+            if(posList.Count<2)return;
+            int mCount=posList.Count;
+            var uList=new Vector3[mCount];var vList=new Vector3[mCount];
+            var refVec=Math.Abs(tanList[0].Z)<0.9?new Vector3(0,0,1):new Vector3(1,0,0);
+            uList[0]=Norm(tanList[0].Cross(refVec));
+            vList[0]=tanList[0].Cross(uList[0]);
+            for(int m=1;m<mCount;m++)
+            {
+                var prevT=tanList[m-1];var curT=tanList[m];var prevU=uList[m-1];
+                var axis=prevT.Cross(curT);double sinPhi=Math.Sqrt(axis.Dot(axis));
+                Vector3 nextU;
+                if(sinPhi>1e-10)
+                {
+                    var k=Mul(axis,1/sinPhi);
+                    double cosPhi=Math.Max(-1,Math.Min(1,prevT.Dot(curT)));
+                    nextU=Add(Add(Mul(prevU,cosPhi),Mul(k.Cross(prevU),sinPhi)),Mul(k,k.Dot(prevU)*(1-cosPhi)));
+                }
+                else nextU=prevU;
+                nextU=Norm(Sub(nextU,Mul(curT,nextU.Dot(curT))));
+                uList[m]=nextU;vList[m]=curT.Cross(nextU);
+            }
+            int nc=Math.Max(16,Math.Min(48,Steps(radius,Tau)));
+            Func<Vector3,Vector3> toView=v=>View(inst.Placement.ToWorld(v),frame);
+            var centers=posList.Select(toView).ToArray();
+            var rings=new List<Vector3>[mCount];
+            for(int m=0;m<mCount;m++)
+            {
+                var ring=new List<Vector3>(nc);
+                for(int k=0;k<nc;k++)
+                {
+                    double ang=Tau*k/nc;
+                    var offset=Add(Mul(uList[m],radius*Math.Cos(ang)),Mul(vList[m],radius*Math.Sin(ang)));
+                    ring.Add(toView(Add(posList[m],offset)));
+                }
+                rings[m]=ring;
+            }
+            var startCap=new List<Vector3>(rings[0]);startCap.Reverse();
+            var endCap=new List<Vector3>(rings[mCount-1]);
+            var own=new List<Face>{
+                new Face(startCap){CutKey=Source(part,"cut:cap:start")},
+                new Face(endCap){CutKey=Source(part,"cut:cap:end")}};
+            var side=new Face[mCount-1][];
+            for(int m=0;m<mCount-1;m++)
+            {
+                side[m]=new Face[nc];
+                for(int k=0;k<nc;k++)
+                {
+                    int next=(k+1)%nc;
+                    side[m][k]=new Face(new List<Vector3>{rings[m][k],rings[m][next],rings[m+1][next],rings[m+1][k]})
+                    {
+                        CutKey=Source(part,"cut:"+spanTags[m]),CutFrom=(double)k/nc,CutTo=(double)(k+1)/nc
+                    };
+                    own.Add(side[m][k]);
+                }
+            }
+            for(int k=0;k<nc;k++)
+            {
+                int next=(k+1)%nc;
+                AddEdge(candidates,rings[0][k],rings[0][next],inst.Id,section,Source(part,"cap:start"),(double)k/nc,(double)(k+1)/nc);
+                AddEdge(candidates,rings[mCount-1][k],rings[mCount-1][next],inst.Id,section,Source(part,"cap:end"),(double)k/nc,(double)(k+1)/nc);
+            }
+            for(int m=0;m<mCount-1;m++)
+            {
+                for(int k=0;k<nc;k++)
+                {
+                    var a=side[m][(k+nc-1)%nc].Normal;var b=side[m][k].Normal;
+                    double az=a.Z/Math.Sqrt(a.Dot(a)),bz=b.Z/Math.Sqrt(b.Dot(b));
+                    if((az>E&&bz<=E)||(bz>E&&az<=E)||(az<-E&&bz>=-E)||(bz<-E&&az>=-E))
+                    {
+                        string tag=SideTag(rings[m][k],rings[m+1][k],centers[m],centers[m+1],k);
+                        AddEdge(candidates,rings[m][k],rings[m+1][k],inst.Id,section,Source(part,"sil:"+spanTags[m]+":"+tag),spanU0[m],spanU1[m]);
+                    }
+                }
+                if(m>0)
+                {
+                    for(int k=0;k<nc;k++)
+                    {
+                        int next=(k+1)%nc;
+                        var a=side[m-1][k].Normal;var b=side[m][k].Normal;
+                        double az=a.Z/Math.Sqrt(a.Dot(a)),bz=b.Z/Math.Sqrt(b.Dot(b));
+                        if((az>E&&bz<=E)||(bz>E&&az<=E)||(az<-E&&bz>=-E)||(bz<-E&&az>=-E))
+                            AddEdge(candidates,rings[m][k],rings[m][next],inst.Id,section,Source(part,"turn:"+spanTags[m]),(double)k/nc,(double)(k+1)/nc);
+                    }
+                }
+            }
+            faces.AddRange(own);
+            var all=rings.SelectMany(r=>r).ToList();
+            if(section&&all.Min(v=>v.Z)<-E&&all.Max(v=>v.Z)>E)
+                Sections(own.SelectMany(f=>CutFace(f,inst.Id)).ToList(),inst.Id,part,result,faces,candidates);
+        }
         internal static ParametricProjection.Result Build(AssemblyMark mark,RigidPlacement frame,bool section,bool showHidden)
         {
             mark.Validate();frame.Validate();
             var faces=new List<Face>();var candidates=new List<Segment>();var result=new ParametricProjection.Result();
             foreach(var i in mark.Instances)
             {
-                var p=mark.Parts.Single(x=>x.Id==i.PartId);var profile=Shape(p);
+                var p=mark.Parts.Single(x=>x.Id==i.PartId);
+                if(p.Kind==PartKind.Rebar)
+                {
+                    AddRebar(i,p,frame,section,faces,candidates,result);
+                    continue;
+                }
+                var profile=Shape(p);
                 Func<Vector3,double,Vector3> world=(v,z)=>View(i.Placement.ToWorld(new Vector3(v.X,v.Y,z)),frame);
                 var bottom=profile.Rings.Select(r=>r.Select(v=>world(v,0)).ToList()).ToArray();
                 var top=profile.Rings.Select(r=>r.Select(v=>world(v,profile.Length)).ToList()).ToArray();

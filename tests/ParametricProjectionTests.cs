@@ -208,6 +208,65 @@ static class ParametricProjectionTests
         var cB=new ParametricProjection.Curve2{InstanceId=Guid.NewGuid(),SourceKey="k2",X0=0,Y0=0.02,X1=100,Y1=0.02,SourceFrom=0,SourceTo=1,Hidden=false};
         var overlapHit=ViewLineOverrides.Pick(ViewLineOverrides.Chain(new[]{cA,cB}),50,0.01,5.0);
         Check(overlapHit!=null&&overlapHit.Coincident.Count==2,"coincident near-overlapping edges grouped on pick");
+        // --- Iteration 4.1.A / Generator 16: Filleted I-beams (ГОСТ 35087-2024) & 3D Rebar ---
+        var beamMark=Mark();
+        var beam30=BeamCatalog.Create("30Б2",1000);
+        beamMark.AddPart(new PartDefinition{Name="Двутавр 30Б2",Kind=PartKind.IBeam,IBeam=beam30},At(0,0,0));
+        var beamTop=ParametricProjection.Build(beamMark,At(0,0,0),false,true);
+        Check(beamTop.Curves.Count>0&&beamTop.Curves.All(ViewLineOverrides.HasSource),"filleted I-beam 30Б2 axial view has 100% semantic keys");
+        var beamSide=ParametricProjection.Build(beamMark,front,false,true);
+        Check(beamSide.Curves.Count>0&&beamSide.Curves.All(ViewLineOverrides.HasSource),"filleted I-beam 30Б2 side view has 100% semantic keys");
+        var beamOblique=ParametricProjection.Build(beamMark,oblique,false,true);
+        Check(beamOblique.Curves.Count>0&&beamOblique.Curves.All(ViewLineOverrides.HasSource),"filleted I-beam 30Б2 oblique view has 100% semantic keys");
+        var beamCut=ParametricProjection.Build(beamMark,At(0,0,500),true,true);
+        double expectedBeamArea=2*beam30.Width*beam30.FlangeThickness+(beam30.Height-2*beam30.FlangeThickness)*beam30.WebThickness+(4-Math.PI)*beam30.RootRadius*beam30.RootRadius;
+        Check(beamCut.Sections.Count==1&&Math.Abs(Area(beamCut.Sections[0])-expectedBeamArea)<3.5,"filleted I-beam cross section area matches nominal geometry ("+Area(beamCut.Sections[0])+" vs "+expectedBeamArea+")");
+        Check(beamCut.Curves.All(ViewLineOverrides.HasSource),"filleted I-beam section has 100% semantic keys");
+        var beamChains=ViewLineOverrides.Chain(beamTop.Curves);
+        var filletChain=beamChains.Single(c=>!c.Hidden&&c.SourceKey.EndsWith(":fillet:0"));
+        Check(filletChain.Segments.Count>=3,"I-beam fillet arc merges into single polyline chain");
+        var filletRule=ViewLineOverrides.CreateForChain(filletChain,ViewLineMode.Hidden,false,batch);
+        var beam40Mark=Json.Copy(beamMark);
+        beam40Mark.Parts[0].IBeam=BeamCatalog.Create("40Ш2",1000);
+        var beam40Top=ParametricProjection.Build(beam40Mark,At(0,0,0),false,true);
+        var afterBeamResize=ViewLineOverrides.Apply(beam40Top.Curves,filletRule,false,out var unmatchedBeam);
+        Check(unmatchedBeam==0&&afterBeamResize.Any(c=>c.Hidden),"I-beam fillet override survives profile change 30Б2 -> 40Ш2");
+        // Straight, L-bent, U-bent, and 3D spatially-bent rebar
+        var straightBarMark=Mark();
+        straightBarMark.AddPart(new PartDefinition{Name="Стержень прямой",Kind=PartKind.Rebar,Rebar=new RebarShape{Diameter=16,Points=new List<Vector3>{new Vector3(0,0,0),new Vector3(0,0,200)}}},At(0,0,0));
+        var straightBarTop=ParametricProjection.Build(straightBarMark,At(0,0,0),false,true);
+        var straightBarSide=ParametricProjection.Build(straightBarMark,front,false,true);
+        var straightBarCut=ParametricProjection.Build(straightBarMark,At(0,0,100),true,true);
+        Check(straightBarTop.Curves.Count>0&&straightBarTop.Curves.All(ViewLineOverrides.HasSource),"straight rebar axial view has 100% semantic keys");
+        Check(straightBarSide.Curves.Count>0&&straightBarSide.Curves.All(ViewLineOverrides.HasSource),"straight rebar side view has 100% semantic keys");
+        Check(straightBarCut.Sections.Count==1&&Math.Abs(Area(straightBarCut.Sections[0])-Math.PI*64)<3.0,"straight rebar cross section area matches circle ("+Area(straightBarCut.Sections[0])+")");
+        Check(straightBarCut.Curves.All(ViewLineOverrides.HasSource),"straight rebar section has 100% semantic keys");
+        var uBarMark=Mark();
+        uBarMark.AddPart(new PartDefinition{Name="П-стержень",Kind=PartKind.Rebar,Rebar=new RebarShape{
+            Diameter=16,
+            Points=new List<Vector3>{new Vector3(0,0,0),new Vector3(0,200,0),new Vector3(200,200,0),new Vector3(200,0,0)},
+            BendRadii=new List<double>{40,40}}},At(0,0,0));
+        var uBarTop=ParametricProjection.Build(uBarMark,At(0,0,0),false,true);
+        Check(uBarTop.Curves.Count>0&&uBarTop.Curves.All(ViewLineOverrides.HasSource),"U-bent rebar top view has 100% semantic keys");
+        var uBarCut=ParametricProjection.Build(uBarMark,new RigidPlacement{Origin=new Vector3(0,100,0),AxisX=new Vector3(1,0,0),AxisY=new Vector3(0,0,1)},true,true);
+        Check(uBarCut.Sections.Count==2&&uBarCut.Curves.All(ViewLineOverrides.HasSource),"section across both legs of U-rebar produces two cut sections with 100% keys");
+        var bendChains=ViewLineOverrides.Chain(uBarTop.Curves);
+        var bendSil=bendChains.First(c=>!c.Hidden&&c.SourceKey.Contains(":sil:bend:0:"));
+        Check(bendSil.Segments.Count>=4,"rebar bend silhouette merges into continuous polyline chain");
+        var bendRule=ViewLineOverrides.CreateForChain(bendSil,ViewLineMode.Hidden,false,batch);
+        var thickerBar=Json.Copy(uBarMark);thickerBar.Parts[0].Rebar.Diameter=20;
+        var thickerView=ParametricProjection.Build(thickerBar,At(0,0,0),false,true);
+        var afterBarResize=ViewLineOverrides.Apply(thickerView.Curves,bendRule,false,out var unmatchedBar);
+        Check(unmatchedBar==0&&afterBarResize.Any(c=>c.Hidden),"rebar bend override survives diameter change Ø16 -> Ø20");
+        var spatialBarMark=Mark();
+        spatialBarMark.AddPart(new PartDefinition{Name="3D стержень",Kind=PartKind.Rebar,Rebar=new RebarShape{
+            Diameter=16,
+            Points=new List<Vector3>{new Vector3(0,0,0),new Vector3(150,0,0),new Vector3(150,150,0),new Vector3(150,150,150)},
+            BendRadii=new List<double>{50,50}}},At(0,0,0));
+        spatialBarMark.AddPart(Plate(80,80,10),At(110,110,180));
+        var spatialBarView=ParametricProjection.Build(spatialBarMark,oblique,false,true);
+        Check(spatialBarView.Curves.Count>0&&spatialBarView.Curves.All(ViewLineOverrides.HasSource),"3D spatially bent rebar with occluding plate has 100% semantic keys");
+        Check(ParametricProjection.Build(spatialBarMark,At(0,0,0),false,true).Curves.Any(c=>c.Hidden),"plate occludes rebar behind it");
         Console.WriteLine(checks+" parametric projection checks passed");
     }
     static double Length(ParametricProjection.Curve2 c)=>c.Circular?c.Radius*c.Sweep:Math.Sqrt(Math.Pow(c.X1-c.X0,2)+Math.Pow(c.Y1-c.Y0,2));
