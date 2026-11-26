@@ -10,7 +10,7 @@ namespace KotNode.AutoCAD
 {
     // Synchronizes native ModelSpace Dimensions and MLeaders attached to parametric views.
     // Preserves manual offsets of dimension lines and leader landings across view MOVE and NAUPDATEVIEW.
-    internal static class ViewAnnotationDrawing
+    public static class ViewAnnotationDrawing
     {
         internal const string TagKey="KOTNODE_VIEW_ANNO_1";
         internal const string AxisLayer="NA_AXIS",AnnoLayer="NA_ANNOTATION";
