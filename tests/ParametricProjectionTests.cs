@@ -330,6 +330,30 @@ static class ParametricProjectionTests
         var callout=new ViewSectionCallout{Start=snapEndA.Anchor,End=snapEndB.Anchor,TargetViewId=secId,Label="1-1"};
         var cg=ViewAnnotations.BuildSectionCallouts(new[]{callout},plateView.Curves,id=>id==secId?"2-2":null,20,out unmatchedA);
         Check(unmatchedA==0&&cg.ThickLines.Count==2&&cg.Arrows.Count==2&&cg.Labels.All(l=>l.Item3=="2"),"section callout resolves dynamic linked section view name");
+        // --- Stages 6 & 7: Universal Spec, Local VRS, Project VRS & CSV ---
+        var repMark=new AssemblyMark{Code="УР-10",Name="Узел крепления"};
+        repMark.AddPart(new PartDefinition{Name="Труба распорки",Position="",Material="С245",IncludeInSpec=false,Kind=PartKind.Pipe,Pipe=new PipeShape{OuterDiameter=820,Thickness=12,Length=1000}},At(0,0,0));
+        repMark.AddPart(new PartDefinition{Name="Фасонка",Position="1",Material="С255",IncludeInSpec=true,Kind=PartKind.RectangularPlate,Plate=new RectangularPlateShape{Length=500,Width=200,Thickness=12}},At(450,0,0));
+        var plateInstId=repMark.Instances.Last().Id;
+        repMark.CopyInstance(plateInstId);
+        repMark.AddPart(new PartDefinition{Name="Арматура",Position="2",Material="А500С",IncludeInSpec=true,Kind=PartKind.Rebar,Rebar=new RebarShape{Diameter=16,Points=new List<Vector3>{new Vector3(0,0,0),new Vector3(500,0,0)}}},At(0,0,100));
+        var specPlan=AssemblyReporting.BuildMarkSpec(repMark);
+        Check(specPlan.Rows.Count==6&&specPlan.Rows.Any(r=>r.Length>1&&r[1].Contains("Лист 12×200×500"))&&specPlan.Rows.Any(r=>r.Length>1&&r[1].Contains("Ø16 А500С")),"universal mark spec includes only specifiable parts with GOST designations");
+        Check(specPlan.Rows.Last()[0].Contains("исключено: 1"),"non-spec pipe excluded and noted in spec footer");
+        var vrsPlan=AssemblyReporting.BuildMarkVrs(repMark,3);
+        Check(Math.Abs(vrsPlan.TotalMassKg-specPlan.TotalMassKg*3)<1e-6,"mark VRS multiplies mass by node count");
+        var proj2=new AssemblyProject{Code="ПР-2026",Name="Котлован"};
+        var legacyNode=new NodeMark{Code="У-01",Name="Стык труб"};
+        proj2.Marks.Add(legacyNode);
+        proj2.Assemblies.Add(repMark);
+        proj2.Uses.Add(new Use{MarkId=legacyNode.Id,Location="Ярус 1",Count=4,Included=true});
+        proj2.Uses.Add(new Use{MarkId=repMark.Id,Location="Ярус 1",Count=2,Included=true});
+        proj2.Uses.Add(new Use{MarkId=repMark.Id,Location="Ярус 2",Count=5,Included=true});
+        var projVrsAll=AssemblyReporting.BuildProjectVrs(proj2);
+        var projVrsTier1=AssemblyReporting.BuildProjectVrs(proj2,"Ярус 1");
+        Check(projVrsAll.TotalMassKg>projVrsTier1.TotalMassKg&&projVrsTier1.TotalMassKg>0,"schema-2 project VRS combines legacy and universal marks and filters by scope");
+        var csvText=AssemblyReporting.ToCsv(projVrsAll);
+        Check(csvText.Contains("ПР-2026")&&csvText.Contains(";"),"CSV export produces valid semicolon table");
         Console.WriteLine(checks+" parametric projection checks passed");
     }
     static double Length(ParametricProjection.Curve2 c)=>c.Circular?c.Radius*c.Sweep:Math.Sqrt(Math.Pow(c.X1-c.X0,2)+Math.Pow(c.Y1-c.Y0,2));

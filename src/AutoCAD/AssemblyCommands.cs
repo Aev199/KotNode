@@ -1183,10 +1183,11 @@ namespace KotNode.AutoCAD
         public void UpdateViews()=>Run("NAUPDATEVIEWS",(doc,tr)=>{
             var m=Need(doc,tr);var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
             var count=AssemblyViews.Update(doc.Database,tr,m,refs);
+            var tables=AssemblyTableDrawing.UpdateMarkTables(doc.Database,tr,m);
             if(count>0)AssemblyDrawing.Save(doc.Database,tr,m);
             var manual=AssemblyViews.Find(doc.Database,tr,m).Count(e=>e.Data.ManualSnapshot);
             var legacy=AssemblyViews.Find(doc.Database,tr,m).Count(e=>!e.Data.ManualSnapshot&&string.IsNullOrEmpty(e.Data.GeneratedChildHandle));
-            doc.Editor.WriteMessage("\nАвтоматически обновлено: "+count+"; старых снимков: "+manual+"; видов старого формата (NAMIGRATEVIEW): "+legacy);
+            doc.Editor.WriteMessage("\nАвтоматически обновлено видов: "+count+"; таблиц: "+tables+"; старых снимков: "+manual+"; видов старого формата (NAMIGRATEVIEW): "+legacy);
         });
         [CommandMethod("NAMIGRATEVIEW",CommandFlags.Modal)]
         public void MigrateView()=>Run("NAMIGRATEVIEW",(doc,tr)=>{
