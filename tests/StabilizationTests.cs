@@ -49,6 +49,13 @@ static class StabilizationTests
         ParametricEngine.Solve(array);
         var child=array.Instances[1].Placement.Origin;
         Check(Math.Abs(Math.Atan2(child.Y,child.X)*180/Math.PI-30)<1e-8,"circular array respects GUI Rz angle");
+        var last=new Point2(100,200);var vd=new Point2(50,60);
+        var off=AnnotationPlacement.Capture(new Point2(70,170),new Point2(50,140),last,vd);
+        Check(Math.Abs(off.X-20)<1e-8&&Math.Abs(off.Y-30)<1e-8,"annotations follow view-only MOVE");
+        off=AnnotationPlacement.Capture(new Point2(120,230),last,last,vd);
+        Check(off.X==20&&off.Y==30,"moving view and annotations together applies no duplicate displacement");
+        off=AnnotationPlacement.Capture(new Point2(140,250),last,last,new Point2(0,0));
+        Check(off.X==40&&off.Y==50,"manual dimension line and landing offsets preserved");
         Console.WriteLine(checks+" stabilization checks passed");
     }
 }

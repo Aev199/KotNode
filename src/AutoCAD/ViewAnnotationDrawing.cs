@@ -131,6 +131,52 @@ namespace KotNode.AutoCAD
             else if(d is DiametricDimension dia){dia.ChordPoint=a;dia.FarChordPoint=b;dia.LeaderLength=Math.Max(5,Math.Sqrt(rd.Source.OffsetX*rd.Source.OffsetX+rd.Source.OffsetY*rd.Source.OffsetY)-rd.Radius);}
             else if(d is RadialDimension rad){rad.Center=ToWorld(xform,rd.Center);rad.ChordPoint=a;rad.LeaderLength=Math.Max(5,Math.Sqrt(rd.Source.OffsetX*rd.Source.OffsetX+rd.Source.OffsetY*rd.Source.OffsetY)-rd.Radius);}
         }
+        internal static void CaptureOffsets(Database db,Transaction tr,AssemblyViews.Entry entry)
+        {
+            var existing=new List<Tuple<Entity,AnnoTag>>();
+            foreach(ObjectId id in AssemblyDrawing.ModelSpace(db,tr))
+            {
+                if(id.IsErased)continue;
+                var e=tr.GetObject(id,OpenMode.ForRead) as Entity;
+                var tag=ReadTag(e,tr);
+                if(tag!=null&&tag.ViewId==entry.Data.Id)existing.Add(Tuple.Create(e,tag));
+            }
+            CaptureOffsets(entry,existing);
+        }
+        static void CaptureOffsets(AssemblyViews.Entry entry,List<Tuple<Entity,AnnoTag>> existing)
+        {
+            var data=entry.Data;
+            var toLocal=entry.Reference.BlockTransform.Inverse();
+            foreach(var item in existing)
+            {
+                var e=item.Item1;var tag=item.Item2;
+                var viewDelta=new Vector3d(entry.Reference.Position.X-tag.LastViewX,entry.Reference.Position.Y-tag.LastViewY,0).TransformBy(toLocal);
+                var lastRef=new Point2(tag.LastRefX,tag.LastRefY);
+                var delta=new Point2(viewDelta.X,viewDelta.Y);
+                if(tag.Kind=="dim"&&e is Dimension dim)
+                {
+                    var modelDim=data.Dimensions?.FirstOrDefault(x=>x.Id==tag.AnnotationId);
+                    if(modelDim==null)continue;
+                    Point3d actualPt,reference;
+                    if(dim is RotatedDimension rd){actualPt=rd.DimLinePoint;reference=rd.XLine1Point+(rd.XLine2Point-rd.XLine1Point)*0.5;}
+                    else if(dim is AlignedDimension ad){actualPt=ad.DimLinePoint;reference=ad.XLine1Point+(ad.XLine2Point-ad.XLine1Point)*0.5;}
+                    else continue;
+                    var local=actualPt.TransformBy(toLocal);var localRef=reference.TransformBy(toLocal);
+                    var offset=AnnotationPlacement.Capture(new Point2(local.X,local.Y),new Point2(localRef.X,localRef.Y),lastRef,delta);
+                    modelDim.OffsetX=offset.X;modelDim.OffsetY=offset.Y;
+                }
+                else if(tag.Kind=="leader"&&e is MLeader ml)
+                {
+                    var leader=data.Leaders?.FirstOrDefault(x=>x.Id==tag.AnnotationId);
+                    if(leader==null)continue;
+                    var lines=ml.GetLeaderIndexes().Cast<int>().SelectMany(j=>ml.GetLeaderLineIndexes(j).Cast<int>()).ToList();
+                    if(lines.Count==0)continue;
+                    var local=ml.TextLocation.TransformBy(toLocal);var localRef=ml.GetFirstVertex(lines[0]).TransformBy(toLocal);
+                    var offset=AnnotationPlacement.Capture(new Point2(local.X,local.Y),new Point2(localRef.X,localRef.Y),lastRef,delta);
+                    leader.LandingOffsetX=offset.X;leader.LandingOffsetY=offset.Y;
+                }
+            }
+        }
         internal static void Sync(Database db,Transaction tr,AssemblyMark mark,AssemblyViews.Entry entry,IList<ParametricProjection.Curve2> rawCurves)
         {
             EnsureStylesAndLayers(db,tr);
@@ -149,45 +195,11 @@ namespace KotNode.AutoCAD
                 if(tag!=null&&tag.ViewId==data.Id)existing.Add(Tuple.Create(e,tag));
             }
 
-            // Capture user manual drag offsets on existing dimensions/leaders before re-resolving.
-            foreach(var item in existing)
-            {
-                var e=item.Item1;var tag=item.Item2;
-                if(tag.Kind=="dim"&&e is Dimension dim)
-                {
-                    var modelDim=data.Dimensions?.FirstOrDefault(x=>x.Id==tag.AnnotationId);
-                    if(modelDim==null)continue;
-                    Point3d actualPt;
-                    if(dim is RotatedDimension rd)actualPt=rd.DimLinePoint;
-                    else if(dim is AlignedDimension ad)actualPt=ad.DimLinePoint;
-                    else continue;
-                    var localActual=actualPt.TransformBy(toLocal);
-                    double dx=localActual.X-(tag.LastRefX+tag.LastOffsetX);
-                    double dy=localActual.Y-(tag.LastRefY+tag.LastOffsetY);
-                    if(Math.Abs(dx)>1e-4||Math.Abs(dy)>1e-4)
-                    {
-                        modelDim.OffsetX=tag.LastOffsetX+dx;
-                        modelDim.OffsetY=tag.LastOffsetY+dy;
-                    }
-                }
-                else if(tag.Kind=="leader"&&e is MLeader ml)
-                {
-                    var modelLeader=data.Leaders?.FirstOrDefault(x=>x.Id==tag.AnnotationId);
-                    if(modelLeader==null)continue;
-                    var localActual=ml.TextLocation.TransformBy(toLocal);
-                    double dx=localActual.X-(tag.LastRefX+tag.LastOffsetX);
-                    double dy=localActual.Y-(tag.LastRefY+tag.LastOffsetY);
-                    if(Math.Abs(dx)>1e-4||Math.Abs(dy)>1e-4)
-                    {
-                        modelLeader.LandingOffsetX=tag.LastOffsetX+dx;
-                        modelLeader.LandingOffsetY=tag.LastOffsetY+dy;
-                    }
-                }
-            }
+            CaptureOffsets(entry,existing);
 
             var resolvedDims=ViewAnnotations.ResolveDimensions(data.Dimensions,rawCurves,data.Welds,scale,out var unmatchedDims);
             var resolvedLeaders=ViewAnnotations.ResolveLeaders(data.Leaders,mark,rawCurves,data.Welds,scale,out var unmatchedLeaders);
-            data.UnmatchedAnnotations=unmatchedDims+unmatchedLeaders;
+            data.UnmatchedAnnotations+=unmatchedDims+unmatchedLeaders;
 
             var keep=new HashSet<ObjectId>();
             var dimStyle=DimStyleId(db,tr);

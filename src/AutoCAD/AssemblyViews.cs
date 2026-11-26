@@ -16,7 +16,7 @@ namespace KotNode.AutoCAD
     public static class AssemblyViews
     {
         internal const string Key="KOTNODE_VIEW_1";
-        internal const int Revision=18;
+        internal const int Revision=19;
         internal const string VisibleLayer="NA_VISIBLE",HiddenLayer="NA_HIDDEN",CutLayer="NA_CUT",HatchLayer="NA_HATCH",WeldLayer="NA_WELD";
         static double PaperScale(ViewData d)=>d.AnnotationScale>0?d.AnnotationScale:20;
         static void Layers(Database db,Transaction tr)
@@ -375,12 +375,14 @@ namespace KotNode.AutoCAD
         internal static BlockReference Create(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs,ViewData data,Point3d location)
         {
             data.MarkId=mark.Id;data.SourceHash=Signature(mark);data.GeneratorRevision=Revision;
-            var geometry=Build(db,tr,mark,refs,data);
+            var rawCurves=new List<ParametricProjection.Curve2>();
+            var geometry=Build(db,tr,mark,refs,data,null,rawCurves);
             var shell=ViewShell.Create(db,tr,geometry,data);
             var reference=new BlockReference(new Point3d(location.X,location.Y,0),shell);
             reference.SetDatabaseDefaults(db);
             var space=AssemblyDrawing.ModelSpace(db,tr,OpenMode.ForWrite);
             space.AppendEntity(reference);tr.AddNewlyCreatedDBObject(reference,true);
+            if(data.ParametricPrototype)ViewAnnotationDrawing.Sync(db,tr,mark,new Entry{Reference=reference,Data=data},rawCurves);
             Save(reference,tr,data);
             return reference;
         }
