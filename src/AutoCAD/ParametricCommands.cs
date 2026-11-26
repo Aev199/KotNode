@@ -48,6 +48,7 @@ namespace KotNode.AutoCAD
                     refs[inst.Id]=AssemblyDrawing.Insert(db,tr,mark,inst,geomByPart[inst.PartId]);
                 }
             }
+            AssemblyDrawing.Synchronize(db,tr,mark);
             AssemblyViews.Update(db,tr,mark,refs);
             AssemblyTableDrawing.UpdateMarkTables(db,tr,mark);
             AssemblyDrawing.Save(db,tr,mark);
@@ -150,9 +151,10 @@ namespace KotNode.AutoCAD
             if(mark.Parameters==null)mark.Parameters=new List<MarkParameter>();
             if(mark.Bindings==null)mark.Bindings=new List<PartBinding>();
             if(mark.PlacementRules==null)mark.PlacementRules=new List<PlacementRule>();
+            AutoScaleMode=AutoScaleMode.Dpi;
             Text="Параметры и формулы семейства — "+mark.Code;
             Font=new Font("Segoe UI",9f);
-            Width=760;Height=560;StartPosition=FormStartPosition.CenterScreen;
+            Width=920;Height=580;MinimumSize=new Size(760,460);StartPosition=FormStartPosition.CenterScreen;
 
             var tabs=new TabControl{Dock=DockStyle.Fill};
             tabs.TabPages.Add(BuildParamsTab());
@@ -186,11 +188,11 @@ namespace KotNode.AutoCAD
             add.Click+=(s,e)=>{ReadParamsFromGrid();mark.Parameters.Add(new MarkParameter{Name="P"+(mark.Parameters.Count+1),Label="Параметр",Value=100});LoadGrids();};
             del.Click+=(s,e)=>{if(paramsGrid.CurrentRow!=null){ReadParamsFromGrid();mark.Parameters.RemoveAt(paramsGrid.CurrentRow.Index);LoadGrids();}};
             bar.Controls.Add(add);bar.Controls.Add(del);
-            paramsGrid.Columns.Add("Name","Имя");
-            paramsGrid.Columns.Add("Label","Описание");
-            paramsGrid.Columns.Add("Value","Значение");
-            paramsGrid.Columns.Add("Formula","Формула (необяз.)");
-            paramsGrid.Columns.Add("Unit","Ед.");
+            paramsGrid.Columns.Add("Name","Имя");paramsGrid.Columns[0].FillWeight=16;
+            paramsGrid.Columns.Add("Label","Описание");paramsGrid.Columns[1].FillWeight=34;
+            paramsGrid.Columns.Add("Value","Значение");paramsGrid.Columns[2].FillWeight=14;
+            paramsGrid.Columns.Add("Formula","Формула (необяз.)");paramsGrid.Columns[3].FillWeight=26;
+            paramsGrid.Columns.Add("Unit","Ед.");paramsGrid.Columns[4].FillWeight=10;
             tab.Controls.Add(paramsGrid);tab.Controls.Add(bar);
             return tab;
         }

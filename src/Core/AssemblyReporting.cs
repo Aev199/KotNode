@@ -106,7 +106,7 @@ namespace KotNode.Core
             {
                 Title=rows[0][0],
                 Rows=rows,
-                ColumnWidths=new[]{5.0,22.0,18.0,5.0,8.0,8.0,9.0},
+                ColumnWidths=new[]{5.0,23.0,19.0,5.5,11.5,9.0,9.5},
                 MergedRows=new[]{0,noteRow},
                 TotalMassKg=totalAll
             };

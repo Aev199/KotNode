@@ -372,7 +372,7 @@ namespace KotNode.AutoCAD
             }
             finally{foreach(var body in bodies)body.Dispose();}
         }
-        internal static void Create(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs,ViewData data,Point3d location)
+        internal static BlockReference Create(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs,ViewData data,Point3d location)
         {
             data.MarkId=mark.Id;data.SourceHash=Signature(mark);data.GeneratorRevision=Revision;
             var geometry=Build(db,tr,mark,refs,data);
@@ -382,6 +382,7 @@ namespace KotNode.AutoCAD
             var space=AssemblyDrawing.ModelSpace(db,tr,OpenMode.ForWrite);
             space.AppendEntity(reference);tr.AddNewlyCreatedDBObject(reference,true);
             Save(reference,tr,data);
+            return reference;
         }
         // Adopt an explicitly selected native 2D block as a manual snapshot.
         // No claim is made about its source or geometric accuracy: user verifies it.

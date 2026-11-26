@@ -225,10 +225,10 @@ namespace KotNode.Core
             var mark=new AssemblyMark{Code="У-03",Name="Стык двутавра 30Б2 на накладках"};
             var beamDef=new PartDefinition{Name="Двутавр 30Б2",Position="",Material="С255",IncludeInSpec=false,Kind=PartKind.IBeam,IBeam=BeamCatalog.Create("30Б2",1200)};
             var beamInst=mark.AddPart(beamDef,new RigidPlacement{Origin=new Vector3(0,0,-600)});
-            var plateDef=new PartDefinition{Name="Накладка полки",Position="1",Material="С255",IncludeInSpec=true,Kind=PartKind.RectangularPlate,Plate=new RectangularPlateShape{Length=150,Width=12,Thickness=600}};
-            var topPlate=mark.AddPart(plateDef,new RigidPlacement{Origin=new Vector3(-75,150,-300)});
+            var plateDef=new PartDefinition{Name="Накладка полки",Position="1",Material="С255",IncludeInSpec=true,Kind=PartKind.RectangularPlate,Plate=new RectangularPlateShape{Length=150,Width=600,Thickness=12}};
+            var topPlate=mark.AddPart(plateDef,new RigidPlacement{Origin=new Vector3(-75,162,-300),AxisX=new Vector3(1,0,0),AxisY=new Vector3(0,0,1)});
             var botPlate=mark.CopyInstance(topPlate.Id);
-            botPlate.Placement=new RigidPlacement{Origin=new Vector3(-75,-162,-300)};
+            botPlate.Placement=new RigidPlacement{Origin=new Vector3(-75,-150,-300),AxisX=new Vector3(1,0,0),AxisY=new Vector3(0,0,1)};
 
             mark.Parameters=new List<MarkParameter>
             {
@@ -241,14 +241,14 @@ namespace KotNode.Core
             {
                 new PartBinding{PartId=beamDef.Id,Property="IBeam.Length",Formula="L_beam"},
                 new PartBinding{PartId=plateDef.Id,Property="Plate.Length",Formula="W_plate"},
-                new PartBinding{PartId=plateDef.Id,Property="Plate.Width",Formula="t_plate"},
-                new PartBinding{PartId=plateDef.Id,Property="Plate.Thickness",Formula="L_plate"}
+                new PartBinding{PartId=plateDef.Id,Property="Plate.Width",Formula="L_plate"},
+                new PartBinding{PartId=plateDef.Id,Property="Plate.Thickness",Formula="t_plate"}
             };
             mark.PlacementRules=new List<PlacementRule>
             {
                 new PlacementRule{Kind=PlacementRuleKind.OffsetFromPart,TargetInstanceId=beamInst.Id,ExprZ="-L_beam / 2"},
-                new PlacementRule{Kind=PlacementRuleKind.OffsetFromPart,TargetInstanceId=topPlate.Id,ExprX="-W_plate / 2",ExprY="150",ExprZ="-L_plate / 2"},
-                new PlacementRule{Kind=PlacementRuleKind.OffsetFromPart,TargetInstanceId=botPlate.Id,ExprX="-W_plate / 2",ExprY="-150 - t_plate",ExprZ="-L_plate / 2"}
+                new PlacementRule{Kind=PlacementRuleKind.OffsetFromPart,TargetInstanceId=topPlate.Id,ExprX="-W_plate / 2",ExprY="150 + t_plate",ExprZ="-L_plate / 2",ExprRotXDeg="90"},
+                new PlacementRule{Kind=PlacementRuleKind.OffsetFromPart,TargetInstanceId=botPlate.Id,ExprX="-W_plate / 2",ExprY="-150",ExprZ="-L_plate / 2",ExprRotXDeg="90"}
             };
             ParametricEngine.Solve(mark);
 
@@ -293,9 +293,9 @@ namespace KotNode.Core
             };
             var gussetInst=mark.AddPart(gussetDef,new RigidPlacement{Origin=new Vector3(0,215,-6)});
 
-            // Automatic array of web stiffener ribs inside waler I-beam (count scales with L_contact(Alpha)).
-            var stiffDef=new PartDefinition{Name="Ребро жёсткости пояса",Position="3",Material="С255",IncludeInSpec=true,Kind=PartKind.RectangularPlate,Plate=new RectangularPlateShape{Length=12,Width=358,Thickness=140}};
-            var stiffInst=mark.AddPart(stiffDef,new RigidPlacement{Origin=new Vector3(-360,-179,5)});
+            // Automatic array of web stiffener ribs inside waler I-beam (real sheet Thickness=12 so VRS groups as Лист t=12).
+            var stiffDef=new PartDefinition{Name="Ребро жёсткости пояса",Position="3",Material="С255",IncludeInSpec=true,Kind=PartKind.RectangularPlate,Plate=new RectangularPlateShape{Length=140,Width=358,Thickness=12}};
+            var stiffInst=mark.AddPart(stiffDef,new RigidPlacement{Origin=new Vector3(-348,-179,5),AxisX=new Vector3(0,0,1),AxisY=new Vector3(0,1,0)});
 
             mark.Parameters=new List<MarkParameter>
             {
@@ -321,7 +321,7 @@ namespace KotNode.Core
                 new PartBinding{PartId=distDef.Id,Property="Plate.Length",Formula="L_contact"},
                 new PartBinding{PartId=distDef.Id,Property="Plate.Thickness",Formula="t_plate"},
                 new PartBinding{PartId=gussetDef.Id,Property="PolygonPlate.Thickness",Formula="t_gusset"},
-                new PartBinding{PartId=stiffDef.Id,Property="Plate.Length",Formula="t_gusset"}
+                new PartBinding{PartId=stiffDef.Id,Property="Plate.Thickness",Formula="t_gusset"}
             };
             mark.PolygonBindings=new List<PolygonBinding>
             {
@@ -345,13 +345,13 @@ namespace KotNode.Core
                 new PlacementRule
                 {
                     Kind=PlacementRuleKind.OffsetFromPart,TargetInstanceId=pipeInst.Id,
-                    ExprX="W_gusset * cos(Alpha)",
-                    ExprY="195 + t_plate + W_gusset * sin(Alpha) + (D / 2) * abs(cos(Alpha)) + 20",
+                    ExprX="W_gusset * 0.65 * cos(Alpha)",
+                    ExprY="195 + t_plate + W_gusset * 0.65 * sin(Alpha)",
                     ExprZ="0",
                     ExprRotXDeg="-(90 - Beta)",
                     ExprRotZDeg="-(90 - Alpha)"
                 },
-                new PlacementRule{Kind=PlacementRuleKind.OffsetFromPart,TargetInstanceId=stiffInst.Id,ExprX="-L_contact / 2 + 40 - t_gusset / 2",ExprY="-179",ExprZ="5"},
+                new PlacementRule{Kind=PlacementRuleKind.OffsetFromPart,TargetInstanceId=stiffInst.Id,ExprX="-L_contact / 2 + 40 + t_gusset / 2",ExprY="-179",ExprZ="5",ExprRotYDeg="-90"},
                 new PlacementRule{Kind=PlacementRuleKind.LinearArray,TargetInstanceId=stiffInst.Id,ExprX="Step_stiff",ExprCount="N_stiff"}
             };
             ParametricEngine.Solve(mark);
