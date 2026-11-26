@@ -33,6 +33,15 @@ namespace KotNode.AutoCAD
                     throw new InvalidOperationException("Откройте пространство модели (TILEMODE=1), единицы DWG — миллиметры (INSUNITS=4).");
                 using(var tr=doc.Database.TransactionManager.StartTransaction())
                 {
+                    if(new[]{"NAEDIT","NADETACH","NADELETE","NATREEDELETE","NAPIPE","NAPLATE","NAPOLYPLATE","NACURVED","NABEAM","NAREBAR","NACOPY","NAARRAY","NAEDITVIEW"}.Contains(command))
+                    {
+                        var current=AssemblyDrawing.Load(doc.Database,tr);
+                        if(current!=null)
+                        {
+                            var refs=AssemblyDrawing.Synchronize(doc.Database,tr,current);
+                            AssemblyViews.UpgradeReferences(doc.Database,tr,current,refs);
+                        }
+                    }
                     action(doc,tr);
                     tr.Commit();
                 }

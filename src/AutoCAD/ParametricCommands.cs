@@ -68,6 +68,7 @@ namespace KotNode.AutoCAD
                     var m=AssemblyDrawing.Load(doc.Database,tr);
                     if(m==null)throw new InvalidOperationException("В текущем DWG нет марки.");
                     var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
+                    AssemblyViews.UpgradeReferences(doc.Database,tr,m,refs);
                     report=ParametricEngine.Solve(m);
                     ApplySolvedMark(doc.Database,tr,m,refs,report);
                     tr.Commit();
@@ -114,6 +115,7 @@ namespace KotNode.AutoCAD
                     m.Parameters=draft.Parameters;
                     m.Bindings=draft.Bindings;
                     m.PlacementRules=draft.PlacementRules;
+                    AssemblyViews.UpgradeReferences(doc.Database,tr,m,refs);
                     report=ParametricEngine.Solve(m);
                     ApplySolvedMark(doc.Database,tr,m,refs,report);
                     tr.Commit();

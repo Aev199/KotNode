@@ -47,20 +47,48 @@ namespace KotNode.AutoCAD
         }
         internal static List<CurveChain> ComputeChains(AssemblyMark mark,AssemblyViews.ViewData data)
         {
-            var frame=AssemblyViews.ResolveFrame(mark,data);
-            var result=ParametricProjection.Build(mark,frame,data.IsSection,true);
-            var curves=ViewLineOverrides.Apply(result.Curves,data.LineOverrides,data.Hidden,out _);
-            return ViewLineOverrides.Chain(curves);
+            var raw=ComputeRawCurves(mark,data);
+            return ViewLineOverrides.Chain(ViewLineOverrides.Apply(raw,data.LineOverrides,data.Hidden,out _));
+        }
+        static List<ViewAnchor> Anchors(AssemblyViews.ViewData d)
+        {
+            var result=new List<ViewAnchor>();
+            foreach(var dim in d.Dimensions??new List<ViewDimension>()){result.Add(dim.AnchorA);result.Add(dim.AnchorB);}
+            foreach(var leader in d.Leaders??new List<ViewLeader>())result.Add(leader.Target);
+            foreach(var axis in d.Axes??new List<ViewAxisMark>())result.Add(axis.Center);
+            foreach(var callout in d.SectionCallouts??new List<ViewSectionCallout>()){result.Add(callout.Start);result.Add(callout.End);}
+            return result;
         }
         internal static List<ParametricProjection.Curve2> ComputeRawCurves(AssemblyMark mark,AssemblyViews.ViewData data)
+            =>ComputeResult(mark,data).Curves;
+        static ParametricProjection.Result ComputeResult(AssemblyMark mark,AssemblyViews.ViewData data)
         {
             var frame=AssemblyViews.ResolveFrame(mark,data);
-            return ParametricProjection.Build(mark,frame,data.IsSection,true).Curves;
+            var result=ParametricProjection.BuildStable(mark,frame,data.IsSection,true);
+            var stable=result.Curves;
+            var anchors=Anchors(data);
+            if(ViewReferenceMigration.Needed(data.LineOverrides,data.Welds,anchors))
+            {
+                // Reconstruct legacy reference geometry without unrelated new shape
+                // types that used to switch the whole scene to a different engine.
+                var legacy=KotNode.Core.Json.Copy(mark);
+                legacy.Instances.RemoveAll(i=>{var p=legacy.Parts.Single(x=>x.Id==i.PartId);return p.Kind!=PartKind.Pipe&&p.Kind!=PartKind.RectangularPlate;});
+                var old=ParametricProjection.Build(legacy,frame,data.IsSection,true).Curves;
+                var lines=ViewReferenceMigration.Lines(data.LineOverrides,old,stable);
+                var welds=ViewReferenceMigration.Welds(data.Welds,old,stable);
+                // Work on copies: a rejected migration must not partially alter data.
+                var copies=anchors.Select(x=>x==null?null:KotNode.Core.Json.Copy(x)).ToList();
+                foreach(var anchor in copies)ViewReferenceMigration.Anchor(anchor,old,stable);
+                data.LineOverrides=lines;data.Welds=welds;
+                for(int i=0;i<anchors.Count;i++)if(anchors[i]!=null)
+                {anchors[i].SourceKey=copies[i].SourceKey;anchors[i].Param=copies[i].Param;}
+            }
+            return result;
         }
         internal static ObjectId Build(Database db,Transaction tr,AssemblyMark mark,AssemblyViews.ViewData data,Func<Guid,string> viewNameLookup=null,List<ParametricProjection.Curve2> rawOut=null)
         {
             // Compute and validate everything before adding drawing objects.
-            var result=ParametricProjection.Build(mark,data.Frame,data.IsSection,true);
+            var result=ComputeResult(mark,data);
             var rawCurves=result.Curves;
             if(rawOut!=null){rawOut.Clear();rawOut.AddRange(rawCurves);}
             result.Curves=ViewLineOverrides.Apply(rawCurves,data.LineOverrides,data.Hidden,out var unmatched);

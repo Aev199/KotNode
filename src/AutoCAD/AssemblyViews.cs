@@ -16,7 +16,7 @@ namespace KotNode.AutoCAD
     public static class AssemblyViews
     {
         internal const string Key="KOTNODE_VIEW_1";
-        internal const int Revision=19;
+        internal const int Revision=20;
         internal const string VisibleLayer="NA_VISIBLE",HiddenLayer="NA_HIDDEN",CutLayer="NA_CUT",HatchLayer="NA_HATCH",WeldLayer="NA_WELD";
         static double PaperScale(ViewData d)=>d.AnnotationScale>0?d.AnnotationScale:20;
         static void Layers(Database db,Transaction tr)
@@ -514,6 +514,11 @@ namespace KotNode.AutoCAD
             entry.Data.SourceHash=Signature(mark);
             entry.Data.GeneratorRevision=Revision;
             Save(original,tr,entry.Data);
+        }
+        internal static void UpgradeReferences(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs)
+        {
+            foreach(var entry in Find(db,tr,mark).Where(e=>e.Data.ParametricPrototype&&!e.Data.ManualSnapshot&&!string.IsNullOrEmpty(e.Data.GeneratedChildHandle)))
+                if(entry.Data.GeneratorRevision<20)Rebuild(db,tr,mark,refs,entry);
         }
         internal static int Update(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs,Guid? only=null)
         {

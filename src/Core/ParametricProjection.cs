@@ -298,6 +298,12 @@ namespace KotNode.Core
             var a=key(c.At(0));var b=key(c.At(1));if(string.CompareOrdinal(a,b)>0){var t=a;a=b;b=t;}
             return (c.Circular?"C":"L")+a+"/"+b+"/"+key(c.At(.5));
         }
+        // One semantic pipeline for managed views. Analytic Build remains available
+        // as the exact legacy geometry oracle and for explicit reference migration.
+        // Curved spatial profiles have a maximum 0.05 mm tessellation sagitta.
+        public static Result BuildStable(AssemblyMark mark,RigidPlacement view,bool section=false,bool showHidden=false)
+            =>SpatialProjection.Build(mark,view,section,showHidden);
+
         public static Result Build(AssemblyMark mark,RigidPlacement view,bool section=false,bool showHidden=false)
         {
             mark.Validate();view.Validate();

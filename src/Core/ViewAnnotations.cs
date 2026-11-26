@@ -199,9 +199,9 @@ namespace KotNode.Core
             }
             if(anchor.Kind==ViewAnchorKind.WeldMidpoint)
             {
-                var w=(welds??Enumerable.Empty<ViewWeldOverlay>()).FirstOrDefault(x=>x.Id==anchor.WeldId);
-                if(w==null)return null;
-                var strokes=ViewWelds.Build(curves,new[]{w},scale,out var unmatched);
+                var group=(welds??Enumerable.Empty<ViewWeldOverlay>()).Where(x=>x.Id==anchor.WeldId||x.GroupId==anchor.WeldId).ToList();
+                if(group.Count==0)return null;
+                var strokes=ViewWelds.Build(curves,group,scale,out var unmatched);
                 if(unmatched>0||strokes.Count==0)return null;
                 var mid=strokes[strokes.Count/2];
                 return new Point2((mid.X0+mid.X1)/2,(mid.Y0+mid.Y1)/2);
@@ -312,7 +312,7 @@ namespace KotNode.Core
             }
             if(leader.Kind==ViewLeaderKind.Weld)
             {
-                var w=(welds??Enumerable.Empty<ViewWeldOverlay>()).FirstOrDefault(x=>x.Id==leader.Target.WeldId);
+                var w=(welds??Enumerable.Empty<ViewWeldOverlay>()).FirstOrDefault(x=>x.Id==leader.Target.WeldId||x.GroupId==leader.Target.WeldId);
                 if(w==null)return "Шов";
                 string k=w.LegMm.ToString("0.#",CultureInfo.InvariantCulture);
                 string suffix=w.Style==ViewWeldStyle.Site?" (монт.)":"";

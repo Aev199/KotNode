@@ -11,6 +11,7 @@ namespace KotNode.Core
     {
         public Guid Id { get; set; }=Guid.NewGuid();
         public Guid BatchId { get; set; }
+        public Guid GroupId { get; set; }
         public Guid InstanceId { get; set; }
         public string SourceKey { get; set; }
         public double From { get; set; }
