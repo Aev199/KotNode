@@ -53,6 +53,7 @@ class Program
   Check(stampA!=ViewGeometryStamp.Compute(new[]{"edge1","edge2","edge2"}),"view inventory duplicate detected");
   Check(ViewGeometryStamp.Record("ab","c")!=ViewGeometryStamp.Record("a","bc"),"view stamp field delimiters unambiguous");
   Check(ViewGeometryStamp.Record((string)null)!=ViewGeometryStamp.Record(""),"view stamp null distinct");
+  StabilizationTests.Run();
   ParametricProjectionTests.Run();
   SectionHatchBoundaryTests.Run();
   TableMergeTests.Run();

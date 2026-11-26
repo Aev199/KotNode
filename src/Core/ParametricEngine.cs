@@ -324,6 +324,61 @@ namespace KotNode.Core
             return rotatedLocal.InParent(axisFrame);
         }
 
+        // Placement dependencies are separate from scalar formula dependencies. Arrays
+        // produce instances too, so references to their children must wait for the array.
+        static List<PlacementRule> OrderRules(AssemblyMark mark)
+        {
+            var rules=mark.PlacementRules??new List<PlacementRule>();
+            var placements=new Dictionary<Guid,PlacementRule>();
+            var generated=new Dictionary<Guid,PlacementRule>();
+            var ids=new HashSet<Guid>();
+            foreach(var r in rules)
+            {
+                Guard.Require(r!=null&&r.Id!=Guid.Empty&&ids.Add(r.Id)&&Enum.IsDefined(typeof(PlacementRuleKind),r.Kind),"Повреждено или повторено правило положения.");
+                Guard.Require(mark.Instances.Any(i=>i.Id==r.TargetInstanceId),"Целевой экземпляр правила положения отсутствует.");
+                Guard.Require(r.ReferenceInstanceId==Guid.Empty||mark.Instances.Any(i=>i.Id==r.ReferenceInstanceId),"Опорный экземпляр правила положения отсутствует.");
+                if(r.Kind==PlacementRuleKind.CircularArray||r.Kind==PlacementRuleKind.LinearArray)
+                {
+                    foreach(var id in r.GeneratedInstanceIds??new List<Guid>())
+                    {
+                        Guard.Require(id!=r.TargetInstanceId&&!generated.ContainsKey(id),"Экземпляр принадлежит нескольким массивам или совпадает с их источником.");
+                        generated[id]=r;
+                    }
+                }
+                else
+                {
+                    Guard.Require(!placements.ContainsKey(r.TargetInstanceId),"Несколько правил задают положение одного экземпляра.");
+                    placements[r.TargetInstanceId]=r;
+                }
+            }
+            foreach(var id in placements.Keys)
+                Guard.Require(!generated.ContainsKey(id),"Положение элемента массива задаётся массивом, а не отдельным правилом.");
+            var ordered=new List<PlacementRule>();
+            var state=new Dictionary<Guid,int>();
+            Action<PlacementRule> visit=null;
+            visit=r=>{
+                if(state.TryGetValue(r.Id,out var st))
+                {
+                    Guard.Require(st==2,"Обнаружена циклическая зависимость правил положения.");
+                    return;
+                }
+                state[r.Id]=1;
+                if(r.ReferenceInstanceId!=Guid.Empty)
+                {
+                    if(placements.TryGetValue(r.ReferenceInstanceId,out var parent))visit(parent);
+                    if(generated.TryGetValue(r.ReferenceInstanceId,out var array))visit(array);
+                }
+                if(r.Kind==PlacementRuleKind.CircularArray||r.Kind==PlacementRuleKind.LinearArray)
+                {
+                    if(placements.TryGetValue(r.TargetInstanceId,out var source))visit(source);
+                    if(generated.TryGetValue(r.TargetInstanceId,out var array))visit(array);
+                }
+                state[r.Id]=2;ordered.Add(r);
+            };
+            foreach(var r in rules)visit(r);
+            return ordered;
+        }
+
         public static SolveReport Solve(AssemblyMark mark)
         {
             Guard.Require(mark!=null,"Марка не задана.");
@@ -336,10 +391,9 @@ namespace KotNode.Core
                 foreach(var b in draft.Bindings)
                 {
                     var part=draft.Parts.FirstOrDefault(p=>p.Id==b.PartId);
-                    if(part==null)continue;
+                    Guard.Require(part!=null,"Привязка ссылается на отсутствующую деталь.");
                     double v=FormulaEngine.Evaluate(b.Formula,report.Values);
                     ApplyBinding(part,b.Property,v);
-                    part.Validate();
                     report.UpdatedParts++;
                 }
             }
@@ -349,7 +403,7 @@ namespace KotNode.Core
                 foreach(var pb in draft.PolygonBindings)
                 {
                     var part=draft.Parts.FirstOrDefault(p=>p.Id==pb.PartId);
-                    if(part==null)continue;
+                    Guard.Require(part!=null,"Привязка ссылается на отсутствующую деталь.");
                     Guard.Require(part.Kind==PartKind.PolygonPlate,"Привязка контура PolygonBinding допустима только для контурного листа.");
                     if(pb.Outer!=null&&pb.Outer.Count>=3)
                     {
@@ -365,18 +419,21 @@ namespace KotNode.Core
                             Radius=FormulaEngine.Evaluate(h.ExprRadius,report.Values)
                         }).ToList();
                     }
-                    part.Validate();
                     report.UpdatedParts++;
                 }
             }
 
+            // Validate final dimensions together, never transient combinations.
+            foreach(var part in draft.Parts)part.Validate();
+
             if(draft.PlacementRules!=null)
             {
-                foreach(var rule in draft.PlacementRules)
+                foreach(var rule in OrderRules(draft))
                 {
                     var target=draft.Instances.FirstOrDefault(i=>i.Id==rule.TargetInstanceId);
-                    if(target==null)continue;
+                    Guard.Require(target!=null,"Целевой экземпляр правила удалён при перестроении массива.");
                     var refInst=rule.ReferenceInstanceId!=Guid.Empty?draft.Instances.FirstOrDefault(i=>i.Id==rule.ReferenceInstanceId):null;
+                    Guard.Require(rule.ReferenceInstanceId==Guid.Empty||refInst!=null,"Опорный экземпляр удалён при перестроении массива.");
                     var refFrame=refInst!=null?refInst.Placement:new RigidPlacement();
                     if(rule.Kind==PlacementRuleKind.OffsetFromPart)
                     {
