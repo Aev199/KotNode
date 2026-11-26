@@ -460,7 +460,8 @@ namespace KotNode.Core
                         double ry=EvalOrZero(rule.ExprRotYDeg,report.Values);
                         double r=radius+radialOff;
                         double rad=angDeg*Math.PI/180.0;
-                        var rel=RelativeEuler(r*Math.Cos(rad),r*Math.Sin(rad),axialZ,rx,ry,angDeg);
+                        double tangentOff=EvalOrZero(rule.ExprY,report.Values);
+                        var rel=RelativeEuler(r*Math.Cos(rad)-tangentOff*Math.Sin(rad),r*Math.Sin(rad)+tangentOff*Math.Cos(rad),axialZ,rx,ry,angDeg);
                         target.Placement=rel.InParent(refFrame);
                         report.UpdatedInstances++;
                     }
@@ -494,11 +495,12 @@ namespace KotNode.Core
                             refFrame.AxisX.X*sx+refFrame.AxisY.X*sy+refZ.X*sz,
                             refFrame.AxisX.Y*sx+refFrame.AxisY.Y*sy+refZ.Y*sz,
                             refFrame.AxisX.Z*sx+refFrame.AxisY.Z*sy+refZ.Z*sz);
-                        double stepAng=rule.Kind==PlacementRuleKind.CircularArray
-                            ? (string.IsNullOrWhiteSpace(rule.ExprAngleDeg)||rule.ExprAngleDeg.Trim()=="0"
-                                ? 2*Math.PI/totalCount
-                                : FormulaEngine.Evaluate(rule.ExprAngleDeg,report.Values)*Math.PI/180.0)
-                            : 0;
+                        double stepAng=0;
+                        if(rule.Kind==PlacementRuleKind.CircularArray)
+                        {
+                            double degrees=EvalOrZero(rule.ExprAngleDeg,report.Values)+EvalOrZero(rule.ExprRotZDeg,report.Values);
+                            stepAng=Math.Abs(degrees)<1e-12?2*Math.PI/totalCount:degrees*Math.PI/180.0;
+                        }
                         for(int k=0;k<extra;k++)
                         {
                             var child=draft.Instances.Single(i=>i.Id==rule.GeneratedInstanceIds[k]);

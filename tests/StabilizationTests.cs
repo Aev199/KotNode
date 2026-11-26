@@ -37,6 +37,18 @@ static class StabilizationTests
         before=Json.Write(small.Mark);
         Reject(()=>ParametricEngine.Solve(small.Mark),"invalid final pipe dimensions rejected");
         Check(before==Json.Write(small.Mark),"invalid dimensions preserve previous model");
+        var baseFamily=NodeFamilyLibrary.BuiltIn()[1];
+        var rib=baseFamily.Mark.Parts.Single(p=>p.Position=="2");
+        Check(AssemblyReporting.VrsProfile(rib)=="Лист t=12","U02 ribs grouped by actual 12 mm stock thickness");
+        var ribInstance=baseFamily.Mark.Instances.First(i=>i.PartId==rib.Id);
+        var zTop=ribInstance.Placement.ToWorld(new Vector3(0,250,0)).Z;
+        Check(Math.Abs(zTop-270)<1e-8,"U02 rib height follows local sheet width after rotation");
+        var array=Pair(out a,out b);array.Instances.RemoveAll(i=>i.Id==b);
+        array.Instances[0].Placement.Origin=new Vector3(10,0,0);
+        array.PlacementRules.Add(new PlacementRule{Kind=PlacementRuleKind.CircularArray,TargetInstanceId=a,ExprCount="4",ExprRotZDeg="30"});
+        ParametricEngine.Solve(array);
+        var child=array.Instances[1].Placement.Origin;
+        Check(Math.Abs(Math.Atan2(child.Y,child.X)*180/Math.PI-30)<1e-8,"circular array respects GUI Rz angle");
         Console.WriteLine(checks+" stabilization checks passed");
     }
 }

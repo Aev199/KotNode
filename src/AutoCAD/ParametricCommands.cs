@@ -204,7 +204,7 @@ namespace KotNode.AutoCAD
             var add=new Button{Text="+ Привязка размера",AutoSize=true,Height=26,FlatStyle=FlatStyle.System};
             var del=new Button{Text="Удалить",AutoSize=true,Height=26,FlatStyle=FlatStyle.System};
             add.Click+=(s,e)=>AddBinding();
-            del.Click+=(s,e)=>{if(bindingsGrid.CurrentRow!=null){mark.Bindings.RemoveAt(bindingsGrid.CurrentRow.Index);LoadGrids();}};
+            del.Click+=(s,e)=>{if(bindingsGrid.CurrentRow!=null){ReadParamsFromGrid();mark.Bindings.RemoveAt(bindingsGrid.CurrentRow.Index);LoadGrids();}};
             bar.Controls.Add(add);bar.Controls.Add(del);
             bindingsGrid.ReadOnly=true;
             bindingsGrid.Columns.Add("Part","Деталь");
@@ -234,6 +234,7 @@ namespace KotNode.AutoCAD
                 f.TextField("Формула","formula","L");
                 f.ValidateFields=()=>{if(string.IsNullOrWhiteSpace(f.Get("formula")))throw new InvalidOperationException("Введите формулу.");};
                 if(f.ShowDialog()!=DialogResult.OK)return;
+                ReadParamsFromGrid();
                 mark.Bindings.Add(new PartBinding{PartId=Guid.Parse(f.Get("part")),Property=f.Get("prop"),Formula=f.Get("formula").Trim()});
                 LoadGrids();
             }
@@ -246,7 +247,7 @@ namespace KotNode.AutoCAD
             var add=new Button{Text="+ Правило (3D-угол / массив)",AutoSize=true,Height=26,FlatStyle=FlatStyle.System};
             var del=new Button{Text="Удалить",AutoSize=true,Height=26,FlatStyle=FlatStyle.System};
             add.Click+=(s,e)=>AddPlacementRule();
-            del.Click+=(s,e)=>{if(rulesGrid.CurrentRow!=null){mark.PlacementRules.RemoveAt(rulesGrid.CurrentRow.Index);LoadGrids();}};
+            del.Click+=(s,e)=>{if(rulesGrid.CurrentRow!=null){ReadParamsFromGrid();mark.PlacementRules.RemoveAt(rulesGrid.CurrentRow.Index);LoadGrids();}};
             bar.Controls.Add(add);bar.Controls.Add(del);
             rulesGrid.ReadOnly=true;
             rulesGrid.Columns.Add("Kind","Правило");
@@ -288,6 +289,7 @@ namespace KotNode.AutoCAD
                 f.TextField("Количество (для массивов)","cnt","1");
                 if(f.ShowDialog()!=DialogResult.OK)return;
                 var kind=(PlacementRuleKind)Enum.Parse(typeof(PlacementRuleKind),f.Get("kind"));
+                ReadParamsFromGrid();
                 mark.PlacementRules.Add(new PlacementRule
                 {
                     Kind=kind,
@@ -327,6 +329,7 @@ namespace KotNode.AutoCAD
 
         void ReadParamsFromGrid()
         {
+            paramsGrid.EndEdit();
             var next=new List<MarkParameter>();
             foreach(DataGridViewRow row in paramsGrid.Rows)
             {
@@ -335,7 +338,8 @@ namespace KotNode.AutoCAD
                 string valStr=(Convert.ToString(row.Cells[2].Value)??"0").Replace(',','.');
                 string formula=Convert.ToString(row.Cells[3].Value)?.Trim()??"";
                 string unit=Convert.ToString(row.Cells[4].Value)?.Trim()??"мм";
-                double.TryParse(valStr,NumberStyles.Float,CultureInfo.InvariantCulture,out var val);
+                if(!double.TryParse(valStr,NumberStyles.Float,CultureInfo.InvariantCulture,out var val))
+                    throw new InvalidOperationException("Неверное число для параметра "+name);
                 next.Add(new MarkParameter{Name=name,Label=label,Value=val,Formula=formula,Unit=unit});
             }
             mark.Parameters=next;

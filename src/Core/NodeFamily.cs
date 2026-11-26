@@ -170,7 +170,7 @@ namespace KotNode.Core
             var pipeInst=mark.AddPart(pipe,new RigidPlacement{Origin=new Vector3(0,0,20)});
             var basePlate=new PartDefinition{Name="Опорная плита",Position="1",Material="С255",IncludeInSpec=true,Kind=PartKind.RectangularPlate,Plate=new RectangularPlateShape{Length=850,Width=850,Thickness=20}};
             var baseInst=mark.AddPart(basePlate,new RigidPlacement{Origin=new Vector3(-425,-425,0)});
-            var rib=new PartDefinition{Name="Ребро жёсткости",Position="2",Material="С255",IncludeInSpec=true,Kind=PartKind.RectangularPlate,Plate=new RectangularPlateShape{Length=140,Width=12,Thickness=250}};
+            var rib=new PartDefinition{Name="Ребро жёсткости",Position="2",Material="С255",IncludeInSpec=true,Kind=PartKind.RectangularPlate,Plate=new RectangularPlateShape{Length=140,Width=250,Thickness=12}};
             var ribInst=mark.AddPart(rib,new RigidPlacement{Origin=new Vector3(265,-6,20)});
 
             mark.Parameters=new List<MarkParameter>
@@ -194,14 +194,14 @@ namespace KotNode.Core
                 new PartBinding{PartId=basePlate.Id,Property="Plate.Width",Formula="B_base"},
                 new PartBinding{PartId=basePlate.Id,Property="Plate.Thickness",Formula="t_base"},
                 new PartBinding{PartId=rib.Id,Property="Plate.Length",Formula="L_rib"},
-                new PartBinding{PartId=rib.Id,Property="Plate.Width",Formula="t_rib"},
-                new PartBinding{PartId=rib.Id,Property="Plate.Thickness",Formula="H_rib"}
+                new PartBinding{PartId=rib.Id,Property="Plate.Width",Formula="H_rib"},
+                new PartBinding{PartId=rib.Id,Property="Plate.Thickness",Formula="t_rib"}
             };
             mark.PlacementRules=new List<PlacementRule>
             {
                 new PlacementRule{Kind=PlacementRuleKind.OffsetFromPart,TargetInstanceId=pipeInst.Id,ExprZ="t_base"},
                 new PlacementRule{Kind=PlacementRuleKind.OffsetFromPart,TargetInstanceId=baseInst.Id,ExprX="-B_base / 2",ExprY="-B_base / 2",ExprZ="0"},
-                new PlacementRule{Kind=PlacementRuleKind.OnPipeSurface,TargetInstanceId=ribInst.Id,ReferenceInstanceId=pipeInst.Id,ExprX="0",ExprZ="0",ExprAngleDeg="0"},
+                new PlacementRule{Kind=PlacementRuleKind.OnPipeSurface,TargetInstanceId=ribInst.Id,ReferenceInstanceId=pipeInst.Id,ExprX="0",ExprY="t_rib / 2",ExprZ="0",ExprRotXDeg="90",ExprAngleDeg="0"},
                 new PlacementRule{Kind=PlacementRuleKind.CircularArray,TargetInstanceId=ribInst.Id,ReferenceInstanceId=pipeInst.Id,ExprCount="N_ribs",ExprAngleDeg="0"}
             };
             ParametricEngine.Solve(mark);

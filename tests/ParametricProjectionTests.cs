@@ -399,7 +399,7 @@ static class ParametricProjectionTests
         Near(basePlateShape.Length,720+2*140+40,"base plate formula B_base = D + 2*L_rib + 40");
         var ribPartId=baseFam.Mark.Parts.Single(p=>p.Position=="2").Id;
         var ribInsts=baseFam.Mark.Instances.Where(i=>i.PartId==ribPartId).ToList();
-        Check(ribInsts.Count==6&&ribInsts.All(r=>Math.Abs(Math.Sqrt(r.Placement.Origin.X*r.Placement.Origin.X+r.Placement.Origin.Y*r.Placement.Origin.Y)-360)<1e-5),"all 6 OnPipeSurface ribs sit flush on R=360 pipe wall");
+        Check(ribInsts.Count==6&&ribInsts.All(r=>{var mid=r.Placement.ToWorld(new Vector3(0,0,6));return Math.Abs(Math.Sqrt(mid.X*mid.X+mid.Y*mid.Y)-360)<1e-5;}),"all 6 OnPipeSurface ribs sit flush on R=360 pipe wall");
         foreach(var fam in families)
         {
             var instFam=NodeFamilyLibrary.Instantiate(fam,"Т-"+fam.Mark.Code,fam.Name);
