@@ -16,6 +16,8 @@ namespace KotNode.Core
         public bool NoHatch { get; set; }
         public double AnnotationScale { get; set; }=20;
         public RigidPlacement Frame { get; set; }=new RigidPlacement();
+        public Guid? FrameAnchorId { get; set; }
+        public RigidPlacement RelativeFrame { get; set; }
         public double OffsetX { get; set; }
         public double OffsetY { get; set; }
         public List<ViewLineOverride> LineOverrides { get; set; }=new List<ViewLineOverride>();
@@ -80,6 +82,17 @@ namespace KotNode.Core
                 }
             }
             ParametricEngine.Solve(copy.Mark);
+            if(copy.Views!=null)
+            {
+                foreach(var vt in copy.Views)
+                {
+                    if(vt.FrameAnchorId.HasValue&&vt.RelativeFrame!=null)
+                    {
+                        var anchor=copy.Mark.Instances.FirstOrDefault(i=>i.Id==vt.FrameAnchorId.Value);
+                        if(anchor!=null)vt.Frame=vt.RelativeFrame.InParent(anchor.Placement);
+                    }
+                }
+            }
             copy.Validate();
             return copy;
         }
@@ -90,7 +103,8 @@ namespace KotNode.Core
             {
                 CreatePipeSpliceFamily(),
                 CreatePipeBasePlateFamily(),
-                CreateIBeamSpliceFamily()
+                CreateIBeamSpliceFamily(),
+                CreateAngledPipeToWalerFamily()
             };
         }
 
@@ -248,6 +262,113 @@ namespace KotNode.Core
                 {
                     new FamilyViewTemplate{Name="Вид сбоку",Frame=new RigidPlacement{Origin=new Vector3(0,0,0),AxisX=new Vector3(0,0,1),AxisY=new Vector3(0,1,0)},Hidden=true,AnnotationScale=20,OffsetX=1800,OffsetY=0},
                     new FamilyViewTemplate{Name="1-1",IsSection=true,FullCut=true,Frame=new RigidPlacement{Origin=new Vector3(0,0,0),AxisX=new Vector3(1,0,0),AxisY=new Vector3(0,1,0)},Hidden=false,AnnotationScale=20,OffsetX=3600,OffsetY=0}
+                }
+            };
+        }
+
+        static NodeFamilyTemplate CreateAngledPipeToWalerFamily()
+        {
+            var mark=new AssemblyMark{Code="У-04",Name="Примыкание трубы к распредпоясу под углом"};
+            // Horizontal waler I-beam (40Ш2: h=390, b=300, s=10, t=16) along WCS X; flanges at Y=±195, Z=±150.
+            var walerDef=new PartDefinition{Name="Распредпояс 40Ш2",Position="",Material="С255",IncludeInSpec=false,Kind=PartKind.IBeam,IBeam=BeamCatalog.Create("40Ш2",2400)};
+            var walerInst=mark.AddPart(walerDef,new RigidPlacement{Origin=new Vector3(-1200,0,0),AxisX=new Vector3(0,0,-1),AxisY=new Vector3(0,1,0)});
+
+            // Approaching strut pipe angled in BOTH plan (Alpha) and elevation (Beta).
+            var pipeDef=new PartDefinition{Name="Труба распорки",Position="",Material="С245",IncludeInSpec=false,Kind=PartKind.Pipe,Pipe=new PipeShape{OuterDiameter=530,Thickness=10,Length=1200}};
+            var pipeInst=mark.AddPart(pipeDef,new RigidPlacement{Origin=new Vector3(0,400,0),AxisX=new Vector3(1,0,0),AxisY=new Vector3(0,0,1)});
+
+            // Distribution plate flush on front waler flange (Y = 195..195+t_plate).
+            var distDef=new PartDefinition{Name="Опорная пластина пояса",Position="1",Material="С255",IncludeInSpec=true,Kind=PartKind.RectangularPlate,Plate=new RectangularPlateShape{Length=800,Width=300,Thickness=20}};
+            var distInst=mark.AddPart(distDef,new RigidPlacement{Origin=new Vector3(-400,215,-150),AxisX=new Vector3(1,0,0),AxisY=new Vector3(0,0,1)});
+
+            // Parametric beveled gusset plate (PolygonPlate) whose contour morphs with Alpha & D.
+            var gussetDef=new PartDefinition
+            {
+                Name="Фасонка упорная угловая",Position="2",Material="С255",IncludeInSpec=true,Kind=PartKind.PolygonPlate,
+                PolygonPlate=new PolygonPlateShape
+                {
+                    Thickness=12,
+                    Outer=new List<Point2>{new Point2(-300,0),new Point2(300,0),new Point2(400,200),new Point2(-200,200)}
+                }
+            };
+            var gussetInst=mark.AddPart(gussetDef,new RigidPlacement{Origin=new Vector3(0,215,-6)});
+
+            // Automatic array of web stiffener ribs inside waler I-beam (count scales with L_contact(Alpha)).
+            var stiffDef=new PartDefinition{Name="Ребро жёсткости пояса",Position="3",Material="С255",IncludeInSpec=true,Kind=PartKind.RectangularPlate,Plate=new RectangularPlateShape{Length=12,Width=358,Thickness=140}};
+            var stiffInst=mark.AddPart(stiffDef,new RigidPlacement{Origin=new Vector3(-360,-179,5)});
+
+            mark.Parameters=new List<MarkParameter>
+            {
+                new MarkParameter{Name="Alpha",Label="Угол подхода в плане (XY)",Value=60,Unit="град"},
+                new MarkParameter{Name="Beta",Label="Угол наклона в верт. плоскости",Value=10,Unit="град"},
+                new MarkParameter{Name="D",Label="Наружный диаметр трубы",Value=530,Unit="мм"},
+                new MarkParameter{Name="t",Label="Толщина стенки трубы",Value=10,Unit="мм"},
+                new MarkParameter{Name="L_pipe",Label="Длина участка трубы",Value=1200,Unit="мм"},
+                new MarkParameter{Name="L_beam",Label="Длина распредпояса",Value=2400,Unit="мм"},
+                new MarkParameter{Name="t_plate",Label="Толщина опорной пластины",Value=20,Unit="мм"},
+                new MarkParameter{Name="t_gusset",Label="Толщина фасонок и рёбер",Value=12,Unit="мм"},
+                new MarkParameter{Name="L_contact",Label="Длина опорной пластины (от Alpha)",Formula="D / sin(Alpha) + 160",Unit="мм"},
+                new MarkParameter{Name="W_gusset",Label="Вылет угловой фасонки",Formula="max(180, D / 2 * abs(cos(Alpha)) + 120)",Unit="мм"},
+                new MarkParameter{Name="N_stiff",Label="Число рёбер в поясе (от Alpha)",Formula="max(2, ceil(L_contact / 250) + 1)",Unit="шт."},
+                new MarkParameter{Name="Step_stiff",Label="Шаг рёбер жёсткости",Formula="(L_contact - 80) / max(1, N_stiff - 1)",Unit="мм"}
+            };
+            mark.Bindings=new List<PartBinding>
+            {
+                new PartBinding{PartId=walerDef.Id,Property="IBeam.Length",Formula="L_beam"},
+                new PartBinding{PartId=pipeDef.Id,Property="Pipe.OuterDiameter",Formula="D"},
+                new PartBinding{PartId=pipeDef.Id,Property="Pipe.Thickness",Formula="t"},
+                new PartBinding{PartId=pipeDef.Id,Property="Pipe.Length",Formula="L_pipe"},
+                new PartBinding{PartId=distDef.Id,Property="Plate.Length",Formula="L_contact"},
+                new PartBinding{PartId=distDef.Id,Property="Plate.Thickness",Formula="t_plate"},
+                new PartBinding{PartId=gussetDef.Id,Property="PolygonPlate.Thickness",Formula="t_gusset"},
+                new PartBinding{PartId=stiffDef.Id,Property="Plate.Length",Formula="t_gusset"}
+            };
+            mark.PolygonBindings=new List<PolygonBinding>
+            {
+                new PolygonBinding
+                {
+                    PartId=gussetDef.Id,
+                    Outer=new List<VertexExpr>
+                    {
+                        new VertexExpr{ExprX="-L_contact / 2 + 20",ExprY="0"},
+                        new VertexExpr{ExprX="L_contact / 2 - 20",ExprY="0"},
+                        new VertexExpr{ExprX="L_contact / 2 - 20 + W_gusset * cos(Alpha)",ExprY="W_gusset * sin(Alpha)"},
+                        new VertexExpr{ExprX="-L_contact / 2 + 20 + W_gusset * cos(Alpha)",ExprY="W_gusset * sin(Alpha)"}
+                    }
+                }
+            };
+            mark.PlacementRules=new List<PlacementRule>
+            {
+                new PlacementRule{Kind=PlacementRuleKind.OffsetFromPart,TargetInstanceId=walerInst.Id,ExprX="-L_beam / 2",ExprRotYDeg="90"},
+                new PlacementRule{Kind=PlacementRuleKind.OffsetFromPart,TargetInstanceId=distInst.Id,ExprX="-L_contact / 2",ExprY="195 + t_plate",ExprZ="-150",ExprRotXDeg="90"},
+                new PlacementRule{Kind=PlacementRuleKind.OffsetFromPart,TargetInstanceId=gussetInst.Id,ExprX="0",ExprY="195 + t_plate",ExprZ="-t_gusset / 2"},
+                new PlacementRule
+                {
+                    Kind=PlacementRuleKind.OffsetFromPart,TargetInstanceId=pipeInst.Id,
+                    ExprX="W_gusset * cos(Alpha)",
+                    ExprY="195 + t_plate + W_gusset * sin(Alpha) + (D / 2) * abs(cos(Alpha)) + 20",
+                    ExprZ="0",
+                    ExprRotXDeg="-(90 - Beta)",
+                    ExprRotZDeg="-(90 - Alpha)"
+                },
+                new PlacementRule{Kind=PlacementRuleKind.OffsetFromPart,TargetInstanceId=stiffInst.Id,ExprX="-L_contact / 2 + 40 - t_gusset / 2",ExprY="-179",ExprZ="5"},
+                new PlacementRule{Kind=PlacementRuleKind.LinearArray,TargetInstanceId=stiffInst.Id,ExprX="Step_stiff",ExprCount="N_stiff"}
+            };
+            ParametricEngine.Solve(mark);
+
+            var pipeLocalFrame=new RigidPlacement{Origin=new Vector3(0,0,0),AxisX=new Vector3(1,0,0),AxisY=new Vector3(0,1,0)};
+            return new NodeFamilyTemplate
+            {
+                Name="Примыкание трубы к распредпоясу под углом",
+                Category="Узловые примыкания (3D)",
+                Description="Узел примыкания трубы к распредпоясу 40Ш2 с заданием углов в 2 плоскостях (Alpha, Beta), адаптивной угловой фасонкой и авто-массивом рёбер жёсткости.",
+                Mark=mark,
+                Views=new List<FamilyViewTemplate>
+                {
+                    new FamilyViewTemplate{Name="План узла",Frame=new RigidPlacement{Origin=new Vector3(0,0,0),AxisX=new Vector3(1,0,0),AxisY=new Vector3(0,1,0)},Hidden=true,AnnotationScale=20,OffsetX=3000,OffsetY=0},
+                    new FamilyViewTemplate{Name="Вид спереди",Frame=new RigidPlacement{Origin=new Vector3(0,0,0),AxisX=new Vector3(1,0,0),AxisY=new Vector3(0,0,1)},Hidden=true,AnnotationScale=20,OffsetX=6200,OffsetY=0},
+                    new FamilyViewTemplate{Name="1-1",IsSection=true,FullCut=true,Frame=new RigidPlacement{Origin=new Vector3(0,0,0),AxisX=new Vector3(0,1,0),AxisY=new Vector3(0,0,1)},Hidden=false,AnnotationScale=20,OffsetX=3000,OffsetY=-2200},
+                    new FamilyViewTemplate{Name="Вид вдоль трубы",Frame=pipeLocalFrame.InParent(pipeInst.Placement),FrameAnchorId=pipeInst.Id,RelativeFrame=pipeLocalFrame,Hidden=true,AnnotationScale=20,OffsetX=6200,OffsetY=-2200}
                 }
             };
         }

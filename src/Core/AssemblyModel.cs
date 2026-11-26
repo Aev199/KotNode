@@ -16,6 +16,7 @@ namespace KotNode.Core
         public List<PartInstance> Instances { get; set; } = new List<PartInstance>();
         public List<MarkParameter> Parameters { get; set; } = new List<MarkParameter>();
         public List<PartBinding> Bindings { get; set; } = new List<PartBinding>();
+        public List<PolygonBinding> PolygonBindings { get; set; } = new List<PolygonBinding>();
         public List<PlacementRule> PlacementRules { get; set; } = new List<PlacementRule>();
 
         public void Validate()

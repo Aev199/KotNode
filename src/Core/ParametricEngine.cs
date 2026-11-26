@@ -21,6 +21,24 @@ namespace KotNode.Core
         public string Property { get; set; }=""; // e.g. "Pipe.OuterDiameter", "Plate.Length", "CurvedPlate.AngleDeg"
         public string Formula { get; set; }="";
     }
+    public sealed class VertexExpr
+    {
+        public string ExprX { get; set; }="0";
+        public string ExprY { get; set; }="0";
+    }
+    public sealed class RoundHoleExpr
+    {
+        public string ExprCenterX { get; set; }="0";
+        public string ExprCenterY { get; set; }="0";
+        public string ExprRadius { get; set; }="10";
+    }
+    public sealed class PolygonBinding
+    {
+        public Guid Id { get; set; }=Guid.NewGuid();
+        public Guid PartId { get; set; }
+        public List<VertexExpr> Outer { get; set; }=new List<VertexExpr>();
+        public List<RoundHoleExpr> RoundHoles { get; set; }=new List<RoundHoleExpr>();
+    }
     public enum PlacementRuleKind { OffsetFromPart=0, OnPipeSurface=1, CircularArray=2, LinearArray=3 }
     public sealed class PlacementRule
     {
@@ -31,6 +49,9 @@ namespace KotNode.Core
         public string ExprX { get; set; }="0";
         public string ExprY { get; set; }="0";
         public string ExprZ { get; set; }="0";
+        public string ExprRotXDeg { get; set; }="0";
+        public string ExprRotYDeg { get; set; }="0";
+        public string ExprRotZDeg { get; set; }="0";
         public string ExprAngleDeg { get; set; }="0";
         public string ExprCount { get; set; }="1";
         public List<Guid> GeneratedInstanceIds { get; set; }=new List<Guid>();
@@ -168,6 +189,10 @@ namespace KotNode.Core
                     case "sin": Need(a,1,name);return Math.Sin(a[0]*Math.PI/180.0);
                     case "cos": Need(a,1,name);return Math.Cos(a[0]*Math.PI/180.0);
                     case "tan": Need(a,1,name);return Math.Tan(a[0]*Math.PI/180.0);
+                    case "asin": Need(a,1,name);if(a[0]<-1||a[0]>1)throw new InvalidDataException("asin вне диапазона [-1; 1].");return Math.Asin(a[0])*180.0/Math.PI;
+                    case "acos": Need(a,1,name);if(a[0]<-1||a[0]>1)throw new InvalidDataException("acos вне диапазона [-1; 1].");return Math.Acos(a[0])*180.0/Math.PI;
+                    case "atan": Need(a,1,name);return Math.Atan(a[0])*180.0/Math.PI;
+                    case "atan2": Need(a,2,name);return Math.Atan2(a[0],a[1])*180.0/Math.PI;
                     case "rad": Need(a,1,name);return a[0]*Math.PI/180.0;
                     case "deg": Need(a,1,name);return a[0]*180.0/Math.PI;
                     case "floor": Need(a,1,name);return Math.Floor(a[0]);
@@ -269,12 +294,27 @@ namespace KotNode.Core
                 default: throw new InvalidDataException("Неизвестное свойство привязки: "+prop);
             }
         }
-        static RigidPlacement RotateAroundZ(RigidPlacement frame,double angleRad)
+        static Vector3 RotEuler(Vector3 v,double rx,double ry,double rz)
         {
-            double c=Math.Cos(angleRad),s=Math.Sin(angleRad);
-            var rot=new RigidPlacement{Origin=new Vector3(0,0,0),AxisX=new Vector3(c,s,0),AxisY=new Vector3(-s,c,0)};
-            return rot.InParent(frame);
+            double cx=Math.Cos(rx),sx=Math.Sin(rx);
+            double y1=v.Y*cx-v.Z*sx,z1=v.Y*sx+v.Z*cx,x1=v.X;
+            double cy=Math.Cos(ry),sy=Math.Sin(ry);
+            double x2=x1*cy+z1*sy,z2=-x1*sy+z1*cy,y2=y1;
+            double cz=Math.Cos(rz),sz=Math.Sin(rz);
+            return new Vector3(x2*cz-y2*sz,x2*sz+y2*cz,z2);
         }
+        static RigidPlacement RelativeEuler(double dx,double dy,double dz,double rxDeg,double ryDeg,double rzDeg)
+        {
+            double rx=rxDeg*Math.PI/180.0,ry=ryDeg*Math.PI/180.0,rz=rzDeg*Math.PI/180.0;
+            return new RigidPlacement
+            {
+                Origin=new Vector3(dx,dy,dz),
+                AxisX=RotEuler(new Vector3(1,0,0),rx,ry,rz),
+                AxisY=RotEuler(new Vector3(0,1,0),rx,ry,rz)
+            };
+        }
+        static double EvalOrZero(string expr,IDictionary<string,double> vars)
+            =>string.IsNullOrWhiteSpace(expr)?0:FormulaEngine.Evaluate(expr,vars);
         static RigidPlacement RotateAroundAxis(RigidPlacement p,RigidPlacement axisFrame,double angleRad)
         {
             var local=p.RelativeTo(axisFrame);
@@ -304,6 +344,32 @@ namespace KotNode.Core
                 }
             }
 
+            if(draft.PolygonBindings!=null)
+            {
+                foreach(var pb in draft.PolygonBindings)
+                {
+                    var part=draft.Parts.FirstOrDefault(p=>p.Id==pb.PartId);
+                    if(part==null)continue;
+                    Guard.Require(part.Kind==PartKind.PolygonPlate,"Привязка контура PolygonBinding допустима только для контурного листа.");
+                    if(pb.Outer!=null&&pb.Outer.Count>=3)
+                    {
+                        part.PolygonPlate.Outer=pb.Outer.Select(v=>new Point2(
+                            FormulaEngine.Evaluate(v.ExprX,report.Values),
+                            FormulaEngine.Evaluate(v.ExprY,report.Values))).ToList();
+                    }
+                    if(pb.RoundHoles!=null&&pb.RoundHoles.Count>0)
+                    {
+                        part.PolygonPlate.RoundHoles=pb.RoundHoles.Select(h=>new RoundHole
+                        {
+                            Center=new Point2(FormulaEngine.Evaluate(h.ExprCenterX,report.Values),FormulaEngine.Evaluate(h.ExprCenterY,report.Values)),
+                            Radius=FormulaEngine.Evaluate(h.ExprRadius,report.Values)
+                        }).ToList();
+                    }
+                    part.Validate();
+                    report.UpdatedParts++;
+                }
+            }
+
             if(draft.PlacementRules!=null)
             {
                 foreach(var rule in draft.PlacementRules)
@@ -314,12 +380,13 @@ namespace KotNode.Core
                     var refFrame=refInst!=null?refInst.Placement:new RigidPlacement();
                     if(rule.Kind==PlacementRuleKind.OffsetFromPart)
                     {
-                        double dx=FormulaEngine.Evaluate(rule.ExprX,report.Values);
-                        double dy=FormulaEngine.Evaluate(rule.ExprY,report.Values);
-                        double dz=FormulaEngine.Evaluate(rule.ExprZ,report.Values);
-                        double ang=FormulaEngine.Evaluate(rule.ExprAngleDeg,report.Values)*Math.PI/180.0;
-                        double c=Math.Cos(ang),s=Math.Sin(ang);
-                        var rel=new RigidPlacement{Origin=new Vector3(dx,dy,dz),AxisX=new Vector3(c,s,0),AxisY=new Vector3(-s,c,0)};
+                        double dx=EvalOrZero(rule.ExprX,report.Values);
+                        double dy=EvalOrZero(rule.ExprY,report.Values);
+                        double dz=EvalOrZero(rule.ExprZ,report.Values);
+                        double rx=EvalOrZero(rule.ExprRotXDeg,report.Values);
+                        double ry=EvalOrZero(rule.ExprRotYDeg,report.Values);
+                        double rz=EvalOrZero(rule.ExprRotZDeg,report.Values)+EvalOrZero(rule.ExprAngleDeg,report.Values);
+                        var rel=RelativeEuler(dx,dy,dz,rx,ry,rz);
                         target.Placement=rel.InParent(refFrame);
                         report.UpdatedInstances++;
                     }
@@ -329,12 +396,14 @@ namespace KotNode.Core
                         var pipePart=draft.Parts.Single(p=>p.Id==refInst.PartId);
                         Guard.Require(pipePart.Kind==PartKind.Pipe,"Опорная деталь для OnPipeSurface должна быть трубой.");
                         double radius=pipePart.Pipe.OuterDiameter/2.0;
-                        double radialOff=FormulaEngine.Evaluate(rule.ExprX,report.Values);
-                        double axialZ=FormulaEngine.Evaluate(rule.ExprZ,report.Values);
-                        double ang=FormulaEngine.Evaluate(rule.ExprAngleDeg,report.Values)*Math.PI/180.0;
+                        double radialOff=EvalOrZero(rule.ExprX,report.Values);
+                        double axialZ=EvalOrZero(rule.ExprZ,report.Values);
+                        double angDeg=EvalOrZero(rule.ExprAngleDeg,report.Values)+EvalOrZero(rule.ExprRotZDeg,report.Values);
+                        double rx=EvalOrZero(rule.ExprRotXDeg,report.Values);
+                        double ry=EvalOrZero(rule.ExprRotYDeg,report.Values);
                         double r=radius+radialOff;
-                        double c=Math.Cos(ang),s=Math.Sin(ang);
-                        var rel=new RigidPlacement{Origin=new Vector3(r*c,r*s,axialZ),AxisX=new Vector3(c,s,0),AxisY=new Vector3(-s,c,0)};
+                        double rad=angDeg*Math.PI/180.0;
+                        var rel=RelativeEuler(r*Math.Cos(rad),r*Math.Sin(rad),axialZ,rx,ry,angDeg);
                         target.Placement=rel.InParent(refFrame);
                         report.UpdatedInstances++;
                     }
@@ -344,9 +413,7 @@ namespace KotNode.Core
                         Guard.Require(totalCount>=1&&totalCount<=200,"Число элементов массива должно быть от 1 до 200.");
                         int extra=totalCount-1;
                         if(rule.GeneratedInstanceIds==null)rule.GeneratedInstanceIds=new List<Guid>();
-                        // Prune missing ids
                         rule.GeneratedInstanceIds.RemoveAll(id=>!draft.Instances.Any(i=>i.Id==id));
-                        // Remove excess generated instances
                         while(rule.GeneratedInstanceIds.Count>extra)
                         {
                             var remId=rule.GeneratedInstanceIds[rule.GeneratedInstanceIds.Count-1];
@@ -354,7 +421,6 @@ namespace KotNode.Core
                             draft.Instances.RemoveAll(i=>i.Id==remId);
                             report.RemovedInstances.Add(remId);
                         }
-                        // Add needed instances
                         while(rule.GeneratedInstanceIds.Count<extra)
                         {
                             var copy=new PartInstance{Id=Guid.NewGuid(),PartId=target.PartId,Placement=Json.Copy(target.Placement)};
@@ -362,9 +428,15 @@ namespace KotNode.Core
                             rule.GeneratedInstanceIds.Add(copy.Id);
                             report.AddedInstances.Add(copy.Id);
                         }
-                        double stepX=rule.Kind==PlacementRuleKind.LinearArray?FormulaEngine.Evaluate(rule.ExprX,report.Values):0;
-                        double stepY=rule.Kind==PlacementRuleKind.LinearArray?FormulaEngine.Evaluate(rule.ExprY,report.Values):0;
-                        double stepZ=rule.Kind==PlacementRuleKind.LinearArray?FormulaEngine.Evaluate(rule.ExprZ,report.Values):0;
+                        double sx=rule.Kind==PlacementRuleKind.LinearArray?EvalOrZero(rule.ExprX,report.Values):0;
+                        double sy=rule.Kind==PlacementRuleKind.LinearArray?EvalOrZero(rule.ExprY,report.Values):0;
+                        double sz=rule.Kind==PlacementRuleKind.LinearArray?EvalOrZero(rule.ExprZ,report.Values):0;
+                        // Express linear step in reference part frame (or WCS if none) so rotated beams step cleanly along their axis.
+                        var refZ=refFrame.AxisX.Cross(refFrame.AxisY);
+                        var worldStep=new Vector3(
+                            refFrame.AxisX.X*sx+refFrame.AxisY.X*sy+refZ.X*sz,
+                            refFrame.AxisX.Y*sx+refFrame.AxisY.Y*sy+refZ.Y*sz,
+                            refFrame.AxisX.Z*sx+refFrame.AxisY.Z*sy+refZ.Z*sz);
                         double stepAng=rule.Kind==PlacementRuleKind.CircularArray
                             ? (string.IsNullOrWhiteSpace(rule.ExprAngleDeg)||rule.ExprAngleDeg.Trim()=="0"
                                 ? 2*Math.PI/totalCount
@@ -381,7 +453,7 @@ namespace KotNode.Core
                                 var o=target.Placement.Origin;
                                 child.Placement=new RigidPlacement
                                 {
-                                    Origin=new Vector3(o.X+stepX*(k+1),o.Y+stepY*(k+1),o.Z+stepZ*(k+1)),
+                                    Origin=new Vector3(o.X+worldStep.X*(k+1),o.Y+worldStep.Y*(k+1),o.Z+worldStep.Z*(k+1)),
                                     AxisX=Json.Copy(target.Placement.AxisX),
                                     AxisY=Json.Copy(target.Placement.AxisY)
                                 };
@@ -398,6 +470,7 @@ namespace KotNode.Core
             mark.Instances=draft.Instances;
             mark.Parameters=draft.Parameters;
             mark.Bindings=draft.Bindings;
+            mark.PolygonBindings=draft.PolygonBindings;
             mark.PlacementRules=draft.PlacementRules;
             return report;
         }

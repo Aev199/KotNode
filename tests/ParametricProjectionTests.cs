@@ -364,7 +364,27 @@ static class ParametricProjectionTests
         Rejected(()=>ParametricEngine.Solve(cyclic),"cyclic parameter dependency rejected");
         // --- Stage 9: Built-in Parametric Families, Live Re-Solve & Roundtrip Persistence ---
         var families=NodeFamilyLibrary.BuiltIn();
-        Check(families.Count==3,"three starter parametric families built in");
+        Check(families.Count==4,"four starter parametric families built in (including 3D angled pipe-to-waler)");
+        // Test 3D multi-plane junction angles (Alpha in plan + Beta in elevation) driving plate length, gusset polygon contour, and stiffener count
+        var waler90=NodeFamilyLibrary.Instantiate(families[3],"У-04-90","Узел 90°",new Dictionary<string,double>{{"Alpha",90},{"Beta",0}});
+        var waler45=NodeFamilyLibrary.Instantiate(families[3],"У-04-45","Узел 45°/20°",new Dictionary<string,double>{{"Alpha",45},{"Beta",20}});
+        var dist90=waler90.Mark.Parts.Single(p=>p.Position=="1").Plate.Length;
+        var dist45=waler45.Mark.Parts.Single(p=>p.Position=="1").Plate.Length;
+        Check(dist45>dist90+150,"sharper junction angle Alpha=45 extends distribution plate L_contact ("+dist90+" -> "+dist45+")");
+        var stiffPart90=waler90.Mark.Parts.Single(p=>p.Position=="3").Id;
+        var stiffPart45=waler45.Mark.Parts.Single(p=>p.Position=="3").Id;
+        int stiffCount90=waler90.Mark.Instances.Count(i=>i.PartId==stiffPart90);
+        int stiffCount45=waler45.Mark.Instances.Count(i=>i.PartId==stiffPart45);
+        Check(stiffCount45>stiffCount90,"sharper junction angle automatically increases stiffener count ("+stiffCount90+" -> "+stiffCount45+")");
+        var pipeAxis45=waler45.Mark.Instances.Single(i=>waler45.Mark.Parts.Single(p=>p.Id==i.PartId).Kind==PartKind.Pipe).Placement;
+        var pipeEnd45=pipeAxis45.ToWorld(new Vector3(0,0,1));
+        var pipeDir45=new Vector3(pipeEnd45.X-pipeAxis45.Origin.X,pipeEnd45.Y-pipeAxis45.Origin.Y,pipeEnd45.Z-pipeAxis45.Origin.Z);
+        Near(pipeDir45.Z,Math.Sin(20*Math.PI/180),"pipe axis tilts in vertical plane by Beta=20°");
+        Near(pipeDir45.X,Math.Cos(20*Math.PI/180)*Math.Cos(45*Math.PI/180),"pipe axis turns in horizontal plane by Alpha=45°");
+        var gusset90=waler90.Mark.Parts.Single(p=>p.Position=="2").PolygonPlate;
+        var gusset45=waler45.Mark.Parts.Single(p=>p.Position=="2").PolygonPlate;
+        Check(Math.Abs(gusset45.Outer[2].X-gusset45.Outer[1].X)>50&&Math.Abs(gusset90.Outer[2].X-gusset90.Outer[1].X)<1e-6,"beveled polygon gusset morphs dynamically with junction angle Alpha");
+        Check(waler45.Views.Any(v=>v.FrameAnchorId.HasValue),"angled junction family includes pipe-anchored 3D view");
         var spliceFam=NodeFamilyLibrary.Instantiate(families[0],"У-101","Стык 1020",new Dictionary<string,double>{{"D",1020},{"N_plates",6}});
         Check(spliceFam.Mark.Parts.Single(p=>p.Kind==PartKind.Pipe).Pipe.OuterDiameter==1020,"family instantiation updates pipe diameter to 1020");
         Check(spliceFam.Mark.Parts.Single(p=>p.Kind==PartKind.CurvedPlate).CurvedPlate.InnerRadius==510,"curved cover plate inner radius follows D/2 = 510");

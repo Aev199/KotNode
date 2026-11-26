@@ -135,6 +135,7 @@ namespace KotNode.AutoCAD
         readonly AssemblyMark mark;
         readonly DataGridView paramsGrid=MakeGrid();
         readonly DataGridView bindingsGrid=MakeGrid();
+        readonly DataGridView rulesGrid=MakeGrid();
 
         static DataGridView MakeGrid()=>new DataGridView
         {
@@ -148,13 +149,15 @@ namespace KotNode.AutoCAD
             this.mark=mark;
             if(mark.Parameters==null)mark.Parameters=new List<MarkParameter>();
             if(mark.Bindings==null)mark.Bindings=new List<PartBinding>();
+            if(mark.PlacementRules==null)mark.PlacementRules=new List<PlacementRule>();
             Text="Параметры и формулы семейства — "+mark.Code;
             Font=new Font("Segoe UI",9f);
-            Width=720;Height=540;StartPosition=FormStartPosition.CenterScreen;
+            Width=760;Height=560;StartPosition=FormStartPosition.CenterScreen;
 
             var tabs=new TabControl{Dock=DockStyle.Fill};
             tabs.TabPages.Add(BuildParamsTab());
             tabs.TabPages.Add(BuildBindingsTab());
+            tabs.TabPages.Add(BuildRulesTab());
 
             var footer=new FlowLayoutPanel{Dock=DockStyle.Bottom,AutoSize=true,FlowDirection=FlowDirection.RightToLeft,Padding=new Padding(6)};
             var ok=new Button{Text="Применить и перестроить",AutoSize=true,Height=28,FlatStyle=FlatStyle.System};
@@ -234,6 +237,68 @@ namespace KotNode.AutoCAD
             }
         }
 
+        TabPage BuildRulesTab()
+        {
+            var tab=new TabPage("Положение, 3D-углы и массивы"){Padding=new Padding(4)};
+            var bar=new FlowLayoutPanel{Dock=DockStyle.Top,AutoSize=true};
+            var add=new Button{Text="+ Правило (3D-угол / массив)",AutoSize=true,Height=26,FlatStyle=FlatStyle.System};
+            var del=new Button{Text="Удалить",AutoSize=true,Height=26,FlatStyle=FlatStyle.System};
+            add.Click+=(s,e)=>AddPlacementRule();
+            del.Click+=(s,e)=>{if(rulesGrid.CurrentRow!=null){mark.PlacementRules.RemoveAt(rulesGrid.CurrentRow.Index);LoadGrids();}};
+            bar.Controls.Add(add);bar.Controls.Add(del);
+            rulesGrid.ReadOnly=true;
+            rulesGrid.Columns.Add("Kind","Правило");
+            rulesGrid.Columns.Add("Target","Деталь");
+            rulesGrid.Columns.Add("XYZ","Смещение (X, Y, Z)");
+            rulesGrid.Columns.Add("Rot","3D-углы (Rx, Ry, Rz)");
+            rulesGrid.Columns.Add("Count","Кол-во");
+            tab.Controls.Add(rulesGrid);tab.Controls.Add(bar);
+            return tab;
+        }
+
+        void AddPlacementRule()
+        {
+            if(mark.Instances.Count==0){MessageBox.Show("В марке нет деталей.");return;}
+            using(var f=new Fields("Новое правило положения / 3D-угла / массива"))
+            {
+                var kinds=new Dictionary<string,string>
+                {
+                    {"OffsetFromPart","Смещение и 3D-углы (Rx, Ry, Rz)"},
+                    {"OnPipeSurface","Привязка к поверхности трубы"},
+                    {"CircularArray","Круговой массив"},
+                    {"LinearArray","Линейный массив"}
+                };
+                f.Choice("Тип правила","kind",kinds,"OffsetFromPart");
+                var instMap=mark.Instances.ToDictionary(i=>i.Id.ToString(),i=>{
+                    var p=mark.Parts.FirstOrDefault(x=>x.Id==i.PartId);
+                    return (p==null?"?":p.Name)+" ["+i.Id.ToString("N").Substring(0,6)+"]";
+                });
+                f.Choice("Целевой экземпляр","target",instMap,mark.Instances[0].Id.ToString());
+                var refMap=new Dictionary<string,string>{{Guid.Empty.ToString(),"(Мировая СК — без опоры)"}};
+                foreach(var kv in instMap)refMap[kv.Key]=kv.Value;
+                f.Choice("Опорный экземпляр","ref",refMap,Guid.Empty.ToString());
+                f.TextField("Формула X / шаг X","x","0");
+                f.TextField("Формула Y / шаг Y","y","0");
+                f.TextField("Формула Z / шаг Z","z","0");
+                f.TextField("Угол вокруг X (Rx), град","rx","0");
+                f.TextField("Угол вокруг Y (Ry), град","ry","0");
+                f.TextField("Угол вокруг Z (Rz), град","rz","0");
+                f.TextField("Количество (для массивов)","cnt","1");
+                if(f.ShowDialog()!=DialogResult.OK)return;
+                var kind=(PlacementRuleKind)Enum.Parse(typeof(PlacementRuleKind),f.Get("kind"));
+                mark.PlacementRules.Add(new PlacementRule
+                {
+                    Kind=kind,
+                    TargetInstanceId=Guid.Parse(f.Get("target")),
+                    ReferenceInstanceId=Guid.Parse(f.Get("ref")),
+                    ExprX=f.Get("x").Trim(),ExprY=f.Get("y").Trim(),ExprZ=f.Get("z").Trim(),
+                    ExprRotXDeg=f.Get("rx").Trim(),ExprRotYDeg=f.Get("ry").Trim(),ExprRotZDeg=f.Get("rz").Trim(),
+                    ExprCount=f.Get("cnt").Trim()
+                });
+                LoadGrids();
+            }
+        }
+
         void LoadGrids()
         {
             paramsGrid.Rows.Clear();
@@ -244,6 +309,17 @@ namespace KotNode.AutoCAD
             {
                 var part=mark.Parts.FirstOrDefault(p=>p.Id==b.PartId);
                 bindingsGrid.Rows.Add(part==null?"?":part.Name,b.Property,b.Formula);
+            }
+            rulesGrid.Rows.Clear();
+            foreach(var r in mark.PlacementRules)
+            {
+                var inst=mark.Instances.FirstOrDefault(i=>i.Id==r.TargetInstanceId);
+                var part=inst==null?null:mark.Parts.FirstOrDefault(p=>p.Id==inst.PartId);
+                string rz=string.IsNullOrWhiteSpace(r.ExprRotZDeg)||r.ExprRotZDeg=="0"?r.ExprAngleDeg:r.ExprRotZDeg;
+                rulesGrid.Rows.Add(r.Kind.ToString(),part==null?"?":part.Name,
+                    (r.ExprX??"0")+", "+(r.ExprY??"0")+", "+(r.ExprZ??"0"),
+                    (r.ExprRotXDeg??"0")+", "+(r.ExprRotYDeg??"0")+", "+(rz??"0"),
+                    r.Kind==PlacementRuleKind.CircularArray||r.Kind==PlacementRuleKind.LinearArray?r.ExprCount:"—");
             }
         }
 
