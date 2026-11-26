@@ -296,6 +296,40 @@ static class ParametricProjectionTests
         var arcStrokes=ViewWelds.Build(resizedCurvedView.Curves,arcWelds,10,out unmatchedW);
         Check(unmatchedW==0&&arcStrokes.Count>=4,"faceted curved arc weld survives radius and facet-count change");
         Rejected(()=>ViewWelds.Validate(new ViewWeldOverlay{InstanceId=Guid.NewGuid(),SourceKey="k",From=0,To=1,LegMm=-2}),"negative weld leg rejected");
+        // --- Stage 5: Associative View Annotations (anchors, dims, leaders, axes, section callouts) ---
+        var snapEndA=ViewAnnotations.SnapAnchor(plateChains,1,1,5.0);
+        var snapEndB=ViewAnnotations.SnapAnchor(plateChains,199,1,5.0);
+        Check(snapEndA!=null&&snapEndB!=null&&Math.Abs(snapEndA.Point.X-0)<1e-6&&Math.Abs(snapEndB.Point.X-200)<1e-6,"semantic anchor snaps to plate endpoints");
+        var dimPlate=new ViewDimension{Kind=ViewDimensionKind.Horizontal,AnchorA=snapEndA.Anchor,AnchorB=snapEndB.Anchor,OffsetX=0,OffsetY=-40};
+        var resDims=ViewAnnotations.ResolveDimensions(new[]{dimPlate},plateView.Curves,null,20,out var unmatchedA);
+        Check(unmatchedA==0&&resDims.Count==1&&Math.Abs(resDims[0].B.X-resDims[0].A.X-200)<1e-6,"linear dimension resolves to exact 200 mm");
+        var resDimsLonger=ViewAnnotations.ResolveDimensions(new[]{dimPlate},longerPlateView.Curves,null,20,out unmatchedA);
+        Check(unmatchedA==0&&resDimsLonger.Count==1&&Math.Abs(resDimsLonger[0].B.X-resDimsLonger[0].A.X-400)<1e-6&&Math.Abs(resDimsLonger[0].LinePoint.Y-(-40))<1e-6,"linear dimension tracks resized plate to 400 mm while keeping Y offset");
+        // Diameter dimension & centerline axis on pipe rim
+        var pipeChains=ViewLineOverrides.Chain(axial.Curves);
+        var snapCenter=ViewAnnotations.SnapAnchor(pipeChains,50,0,5.0,true);
+        Check(snapCenter!=null&&snapCenter.Anchor.Kind==ViewAnchorKind.CurveCenter,"diameter/axis snap resolves circular center");
+        var diaDim=new ViewDimension{Kind=ViewDimensionKind.Diameter,AnchorA=snapCenter.Anchor,OffsetX=70,OffsetY=70};
+        var resDia=ViewAnnotations.ResolveDimensions(new[]{diaDim},newRim.Curves,null,20,out unmatchedA);
+        Check(unmatchedA==0&&Math.Abs(resDia[0].Radius-60)<1e-6,"diameter dimension tracks resized pipe radius 50 -> 60");
+        var axStrokes=ViewAnnotations.BuildAxes(new[]{new ViewAxisMark{Center=snapCenter.Anchor}},newRim.Curves,20,out unmatchedA);
+        Check(unmatchedA==0&&axStrokes.Count==2&&Math.Abs(axStrokes[0].X1-axStrokes[0].X0-(2*(60+50)))<1e-6,"axis cross scales with resized pipe radius + overhang");
+        // Position leader tracks PartDefinition.Position change; Weld leader tracks weld leg & midpoint
+        plateMark.Parts[0].IncludeInSpec=true;plateMark.Parts[0].Position="7";
+        var posLeader=new ViewLeader{Kind=ViewLeaderKind.Position,Target=snapEndB.Anchor,LandingOffsetX=30,LandingOffsetY=30};
+        var resPos=ViewAnnotations.ResolveLeaders(new[]{posLeader},plateMark,plateView.Curves,null,20,out unmatchedA);
+        Check(unmatchedA==0&&resPos[0].Text=="Поз. 7","position leader pulls PartDefinition.Position dynamically");
+        plateMark.Parts[0].Position="12";
+        var resPos2=ViewAnnotations.ResolveLeaders(new[]{posLeader},plateMark,longerPlateView.Curves,null,20,out unmatchedA);
+        Check(unmatchedA==0&&resPos2[0].Text=="Поз. 12"&&Math.Abs(resPos2[0].Tip.X-400)<1e-6,"position leader updates both text and tip on part edit");
+        var weldLeader=new ViewLeader{Kind=ViewLeaderKind.Weld,Target=new ViewAnchor{Kind=ViewAnchorKind.WeldMidpoint,WeldId=siteWelds[0].Id},LandingOffsetX=20,LandingOffsetY=-30};
+        var resWL=ViewAnnotations.ResolveLeaders(new[]{weldLeader},plateMark,plateView.Curves,siteWelds,10,out unmatchedA);
+        Check(unmatchedA==0&&resWL[0].Text.Contains("8")&&resWL[0].Text.Contains("монт."),"weld leader formats GOST leg and site label");
+        // Section callout links to section view name dynamically
+        var secId=Guid.NewGuid();
+        var callout=new ViewSectionCallout{Start=snapEndA.Anchor,End=snapEndB.Anchor,TargetViewId=secId,Label="1-1"};
+        var cg=ViewAnnotations.BuildSectionCallouts(new[]{callout},plateView.Curves,id=>id==secId?"2-2":null,20,out unmatchedA);
+        Check(unmatchedA==0&&cg.ThickLines.Count==2&&cg.Arrows.Count==2&&cg.Labels.All(l=>l.Item3=="2"),"section callout resolves dynamic linked section view name");
         Console.WriteLine(checks+" parametric projection checks passed");
     }
     static double Length(ParametricProjection.Curve2 c)=>c.Circular?c.Radius*c.Sweep:Math.Sqrt(Math.Pow(c.X1-c.X0,2)+Math.Pow(c.Y1-c.Y0,2));

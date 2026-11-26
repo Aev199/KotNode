@@ -16,7 +16,7 @@ namespace KotNode.AutoCAD
     public static class AssemblyViews
     {
         internal const string Key="KOTNODE_VIEW_1";
-        internal const int Revision=17;
+        internal const int Revision=18;
         internal const string VisibleLayer="NA_VISIBLE",HiddenLayer="NA_HIDDEN",CutLayer="NA_CUT",HatchLayer="NA_HATCH",WeldLayer="NA_WELD";
         static double PaperScale(ViewData d)=>d.AnnotationScale>0?d.AnnotationScale:20;
         static void Layers(Database db,Transaction tr)
@@ -78,6 +78,11 @@ namespace KotNode.AutoCAD
             public int UnmatchedLineOverrides { get; set; }
             public List<ViewWeldOverlay> Welds { get; set; }=new List<ViewWeldOverlay>();
             public int UnmatchedWelds { get; set; }
+            public List<ViewDimension> Dimensions { get; set; }=new List<ViewDimension>();
+            public List<ViewLeader> Leaders { get; set; }=new List<ViewLeader>();
+            public List<ViewAxisMark> Axes { get; set; }=new List<ViewAxisMark>();
+            public List<ViewSectionCallout> SectionCallouts { get; set; }=new List<ViewSectionCallout>();
+            public int UnmatchedAnnotations { get; set; }
         }
         internal sealed class Entry
         {
@@ -337,11 +342,12 @@ namespace KotNode.AutoCAD
             if(data.RelativeFrame==null)throw new InvalidOperationException("Повреждена локальная плоскость представления.");
             return data.RelativeFrame.InParent(anchor.Placement);
         }
-        static ObjectId Build(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs,ViewData data)
+        static ObjectId Build(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs,ViewData data,Func<Guid,string> viewNameLookup=null,List<ParametricProjection.Curve2> rawOut=null)
         {
             data.Frame=ResolveFrame(mark,data);
             Layers(db,tr);
-            if(data.ParametricPrototype)return ParametricViewDrawing.Build(db,tr,mark,data);
+            ViewAnnotationDrawing.EnsureStylesAndLayers(db,tr);
+            if(data.ParametricPrototype)return ParametricViewDrawing.Build(db,tr,mark,data,viewNameLookup,rawOut);
             if(refs.Count==0)throw new InvalidOperationException("В марке нет деталей для представления.");
             var bodies=Bodies(tr,refs,ToLocal(data.Frame));
             try
@@ -470,13 +476,17 @@ namespace KotNode.AutoCAD
                 throw new InvalidOperationException("Вид старого формата. Выполните NAMIGRATEVIEW с резервной копией; правки не будут перенесены автоматически.");
             var child=ViewShell.RequireUnchanged(tr,entry);
             if(!entry.Data.IsSection||entry.Data.FullCut)entry.Data.ParametricPrototype=true;
-            var geometry=Build(db,tr,mark,refs,entry.Data);
+            var allViews=Find(db,tr,mark).ToDictionary(e=>e.Data.Id,e=>e.Data.Name);
+            Func<Guid,string> lookup=id=>allViews.TryGetValue(id,out var n)?n:null;
+            var rawCurves=new List<ParametricProjection.Curve2>();
+            var geometry=Build(db,tr,mark,refs,entry.Data,lookup,rawCurves);
             AssemblyDrawing.Replace(child,geometry);
             child.RecordGraphicsModified(true);
             if(!entry.Reference.IsWriteEnabled)entry.Reference.UpgradeOpen();
             entry.Reference.RecordGraphicsModified(true);
             entry.Data.GeneratedStamp=ViewShell.Stamp(tr,geometry);
             entry.Data.SourceHash=Signature(mark);entry.Data.GeneratorRevision=Revision;entry.Data.ManualSnapshot=false;
+            if(entry.Data.ParametricPrototype)ViewAnnotationDrawing.Sync(db,tr,mark,entry,rawCurves);
             Save(entry.Reference,tr,entry.Data);
         }
         internal static void Migrate(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs,Entry entry,Point3d backupAt)

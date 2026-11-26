@@ -81,11 +81,12 @@ namespace KotNode.AutoCAD
             headerPanel.Controls.Add(topButtons,1,0);
             root.Controls.Add(headerPanel,0,0);
 
-            // --- 1. Tabbed actions (3 clean functional tabs instead of 28 flat buttons) ---
+            // --- 1. Tabbed actions (clean functional tabs instead of flat button wall) ---
             var tabs=new TabControl{Dock=DockStyle.Fill,Height=152,Margin=new Padding(0,0,0,6)};
             tabs.TabPages.Add(BuildPartsTab());
             tabs.TabPages.Add(BuildEditTab());
             tabs.TabPages.Add(BuildViewsTab());
+            tabs.TabPages.Add(BuildDraftingTab());
             root.Controls.Add(tabs,0,1);
 
             // --- 2. Tree caption ---
@@ -209,6 +210,23 @@ namespace KotNode.AutoCAD
             grid.Controls.Add(weldBtn,0,3);
             grid.SetColumnSpan(weldBtn,2);
             AddGridButton(grid,2,3,"Сброс швов","NAWELDRESET","Удалить параметрические сварные швы вида (NAWELDRESET)");
+            page.Controls.Add(grid);
+            return page;
+        }
+
+        TabPage BuildDraftingTab()
+        {
+            var page=new TabPage("Оформление"){Padding=new Padding(4)};
+            var grid=MakeGrid(3,3);
+            AddGridButton(grid,0,0,"Размер","NADIM","Ассоциативный размер на виде (NADIM)");
+            AddGridButton(grid,1,0,"Позиция","NAPOS","Ассоциативная выноска позиции детали (NAPOS)");
+            AddGridButton(grid,2,0,"Выноска шва","NAWELDLEADER","Выноска параметрического сварного шва (NAWELDLEADER)");
+            AddGridButton(grid,0,1,"Ось","NAAXIS","Ассоциативная осевая линия центра трубы/отверстия (NAAXIS)");
+            AddGridButton(grid,1,1,"Разрез 1-1","NASECTIONMARK","Обозначение линии разреза со стрелками (NASECTIONMARK)");
+            AddGridButton(grid,2,1,"Очистить","NAANNORESET","Очистить ассоциативное оформление вида (NAANNORESET)");
+            AddGridButton(grid,0,2,"Спецификация","NASPEC","Вставить таблицу спецификации марки (NASPEC)");
+            AddGridButton(grid,1,2,"ВРС марки","NAVRS","Вставить ведомость расхода стали марки (NAVRS)");
+            AddGridButton(grid,2,2,"Проект","NPROJECT2","Открыть диспетчер проекта Schema 2 (NPROJECT2)");
             page.Controls.Add(grid);
             return page;
         }

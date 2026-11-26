@@ -1215,6 +1215,7 @@ namespace KotNode.AutoCAD
             AssemblyViews.Update(doc.Database,tr,m,refs,entry.Data.Id);
             AssemblyDrawing.Save(doc.Database,tr,m);
         });
+        internal static void RefreshPalette(Document doc)=>RefreshTree(doc);
         static void RefreshTree(Document doc)
         {
             if(constructorPanel==null||doc==null)return;

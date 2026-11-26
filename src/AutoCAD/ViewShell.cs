@@ -33,6 +33,8 @@ namespace KotNode.AutoCAD
                 }
             }
             else if(e is Hatch hatch)fields.AddRange(new[]{hatch.PatternName,N(hatch.PatternAngle),N(hatch.PatternSpace),N(hatch.PatternScale),hatch.HatchStyle.ToString(),hatch.NumberOfLoops.ToString(CultureInfo.InvariantCulture)});
+            else if(e is DBText txt)fields.AddRange(new[]{txt.TextString??"",P(txt.Position),N(txt.Height)});
+            else if(e is Solid solid)fields.AddRange(new[]{P(solid.GetPointAt(0)),P(solid.GetPointAt(1)),P(solid.GetPointAt(2))});
             // Extents supplement the inventory; for other native curves or complex
             // hatch edits this is not a complete serialization of the object.
             var bounds=e.GeometricExtents;

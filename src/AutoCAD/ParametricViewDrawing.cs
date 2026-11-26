@@ -57,11 +57,12 @@ namespace KotNode.AutoCAD
             var frame=AssemblyViews.ResolveFrame(mark,data);
             return ParametricProjection.Build(mark,frame,data.IsSection,true).Curves;
         }
-        internal static ObjectId Build(Database db,Transaction tr,AssemblyMark mark,AssemblyViews.ViewData data)
+        internal static ObjectId Build(Database db,Transaction tr,AssemblyMark mark,AssemblyViews.ViewData data,Func<Guid,string> viewNameLookup=null,List<ParametricProjection.Curve2> rawOut=null)
         {
             // Compute and validate everything before adding drawing objects.
             var result=ParametricProjection.Build(mark,data.Frame,data.IsSection,true);
             var rawCurves=result.Curves;
+            if(rawOut!=null){rawOut.Clear();rawOut.AddRange(rawCurves);}
             result.Curves=ViewLineOverrides.Apply(rawCurves,data.LineOverrides,data.Hidden,out var unmatched);
             data.UnmatchedLineOverrides=unmatched;
             if(result.Curves.Count==0)throw new InvalidOperationException("Параметрическое представление пустое: проверьте направление и секущую плоскость.");
@@ -69,6 +70,9 @@ namespace KotNode.AutoCAD
             double scale=data.AnnotationScale>0?data.AnnotationScale:20;
             var weldStrokes=ViewWelds.Build(rawCurves,data.Welds,scale,out var unmatchedWelds);
             data.UnmatchedWelds=unmatchedWelds;
+            var axisStrokes=ViewAnnotations.BuildAxes(data.Axes,rawCurves,scale,out var unmatchedAxes);
+            var callouts=ViewAnnotations.BuildSectionCallouts(data.SectionCallouts,rawCurves,viewNameLookup,scale,out var unmatchedCallouts);
+            data.UnmatchedAnnotations=unmatchedAxes+unmatchedCallouts;
             var table=(BlockTable)tr.GetObject(db.BlockTableId,OpenMode.ForWrite);
             var block=new BlockTableRecord{Name="NA_PARAM_VIEW_"+Guid.NewGuid().ToString("N"),Units=UnitsValue.Millimeters};
             var id=table.Add(block);tr.AddNewlyCreatedDBObject(block,true);
@@ -104,6 +108,48 @@ namespace KotNode.AutoCAD
                     entity.LinetypeId=stroke.Hidden?dashed:continuous;
                     entity.LinetypeScale=ltScale;
                 }
+            if(axisStrokes.Count>0&&types.Has("NA_CENTER"))
+            {
+                var centerType=types["NA_CENTER"];
+                double centerPeriod=((LinetypeTableRecord)tr.GetObject(centerType,OpenMode.ForRead)).PatternLength;
+                if(centerPeriod<=1e-6)centerPeriod=18;
+                foreach(var ax in axisStrokes)
+                    using(var line=new Line(new Point3d(ax.X0,ax.Y0,0),new Point3d(ax.X1,ax.Y1,0)))
+                    {
+                        double len=Math.Sqrt((ax.X1-ax.X0)*(ax.X1-ax.X0)+(ax.Y1-ax.Y0)*(ax.Y1-ax.Y0));
+                        double ltScale=len>1e-6?ViewLineOverrides.HiddenLineScale(len,scale,globalScale,centerPeriod):1;
+                        var lineId=AssemblyViews.StoreCurve(block,tr,db,line,ViewAnnotationDrawing.AxisLayer,ltScale);
+                        var entity=(Entity)tr.GetObject(lineId,OpenMode.ForWrite);
+                        entity.LinetypeId=centerType;
+                        entity.LinetypeScale=ltScale;
+                    }
+            }
+            if(callouts.ThickLines.Count>0||callouts.ThinLines.Count>0)
+            {
+                var textStyle=ViewAnnotationDrawing.TextStyleId(db,tr);
+                foreach(var s in callouts.ThickLines)
+                    using(var line=new Line(new Point3d(s.X0,s.Y0,0),new Point3d(s.X1,s.Y1,0)))
+                    {
+                        var lid=AssemblyViews.StoreCurve(block,tr,db,line,ViewAnnotationDrawing.AnnoLayer,1);
+                        var e=(Entity)tr.GetObject(lid,OpenMode.ForWrite);
+                        e.LineWeight=LineWeight.LineWeight050;
+                    }
+                foreach(var s in callouts.ThinLines)
+                    using(var line=new Line(new Point3d(s.X0,s.Y0,0),new Point3d(s.X1,s.Y1,0)))
+                        AssemblyViews.StoreCurve(block,tr,db,line,ViewAnnotationDrawing.AnnoLayer,1);
+                foreach(var tri in callouts.Arrows)
+                {
+                    var solid=new Solid(new Point3d(tri.Item1.X,tri.Item1.Y,0),new Point3d(tri.Item2.X,tri.Item2.Y,0),new Point3d(tri.Item3.X,tri.Item3.Y,0),new Point3d(tri.Item3.X,tri.Item3.Y,0));
+                    solid.SetDatabaseDefaults(db);solid.Layer=ViewAnnotationDrawing.AnnoLayer;solid.ColorIndex=256;
+                    block.AppendEntity(solid);tr.AddNewlyCreatedDBObject(solid,true);
+                }
+                foreach(var lbl in callouts.Labels)
+                {
+                    var txt=new DBText{TextString=lbl.Item3,Position=new Point3d(lbl.Item1.X,lbl.Item1.Y,0),Height=lbl.Item2,TextStyleId=textStyle,Layer=ViewAnnotationDrawing.AnnoLayer};
+                    txt.SetDatabaseDefaults(db);txt.Layer=ViewAnnotationDrawing.AnnoLayer;
+                    block.AppendEntity(txt);tr.AddNewlyCreatedDBObject(txt,true);
+                }
+            }
             if(data.NoHatch)return id;
             int index=0;
             foreach(var area in result.Sections)
