@@ -14,6 +14,9 @@ namespace KotNode.Core
         public string Name { get; set; } = "Произвольный узел";
         public List<PartDefinition> Parts { get; set; } = new List<PartDefinition>();
         public List<PartInstance> Instances { get; set; } = new List<PartInstance>();
+        public List<MarkParameter> Parameters { get; set; } = new List<MarkParameter>();
+        public List<PartBinding> Bindings { get; set; } = new List<PartBinding>();
+        public List<PlacementRule> PlacementRules { get; set; } = new List<PlacementRule>();
 
         public void Validate()
         {

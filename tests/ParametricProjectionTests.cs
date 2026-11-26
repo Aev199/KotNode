@@ -354,6 +354,52 @@ static class ParametricProjectionTests
         Check(projVrsAll.TotalMassKg>projVrsTier1.TotalMassKg&&projVrsTier1.TotalMassKg>0,"schema-2 project VRS combines legacy and universal marks and filters by scope");
         var csvText=AssemblyReporting.ToCsv(projVrsAll);
         Check(csvText.Contains("ПР-2026")&&csvText.Contains(";"),"CSV export produces valid semicolon table");
+        // --- Stage 8: Safe Formula Engine, DAG Parameter Solver, Surface & Array Constraints ---
+        var vars=new Dictionary<string,double>(StringComparer.OrdinalIgnoreCase){{"D",820},{"N",4}};
+        Near(FormulaEngine.Evaluate("D / 2 + sqrt(16) * 10",vars),450,"formula engine arithmetic and sqrt");
+        Near(FormulaEngine.Evaluate("if(N > 3, min(84, 360 / N - 18), 90)",vars),72,"formula engine conditional and min");
+        Rejected(()=>FormulaEngine.Evaluate("10 / (N - 4)",vars),"formula engine rejects division by zero");
+        var cyclic=new AssemblyMark{Parameters=new List<MarkParameter>{
+            new MarkParameter{Name="A",Formula="B + 1"},new MarkParameter{Name="B",Formula="A + 1"}}};
+        Rejected(()=>ParametricEngine.Solve(cyclic),"cyclic parameter dependency rejected");
+        // --- Stage 9: Built-in Parametric Families, Live Re-Solve & Roundtrip Persistence ---
+        var families=NodeFamilyLibrary.BuiltIn();
+        Check(families.Count==3,"three starter parametric families built in");
+        var spliceFam=NodeFamilyLibrary.Instantiate(families[0],"У-101","Стык 1020",new Dictionary<string,double>{{"D",1020},{"N_plates",6}});
+        Check(spliceFam.Mark.Parts.Single(p=>p.Kind==PartKind.Pipe).Pipe.OuterDiameter==1020,"family instantiation updates pipe diameter to 1020");
+        Check(spliceFam.Mark.Parts.Single(p=>p.Kind==PartKind.CurvedPlate).CurvedPlate.InnerRadius==510,"curved cover plate inner radius follows D/2 = 510");
+        Check(spliceFam.Mark.Instances.Count(i=>i.PartId==spliceFam.Mark.Parts.Single(p=>p.Kind==PartKind.CurvedPlate).Id)==6,"circular array expands cover plates from 4 to 6");
+        // Shrink array from 6 -> 3 and verify stable cleanup
+        spliceFam.Mark.Parameters.Single(p=>p.Name=="N_plates").Value=3;
+        var shrinkReport=ParametricEngine.Solve(spliceFam.Mark);
+        Check(shrinkReport.RemovedInstances.Count==3&&spliceFam.Mark.Instances.Count(i=>i.PartId==spliceFam.Mark.Parts.Single(p=>p.Kind==PartKind.CurvedPlate).Id)==3,"circular array shrinks cleanly from 6 to 3");
+        // Pipe base plate family: OnPipeSurface ribs follow diameter change + views project cleanly!
+        var baseFam=NodeFamilyLibrary.Instantiate(families[1],"У-202","Опора 720",new Dictionary<string,double>{{"D",720},{"N_ribs",6}});
+        var basePlateShape=baseFam.Mark.Parts.Single(p=>p.Position=="1").Plate;
+        Near(basePlateShape.Length,720+2*140+40,"base plate formula B_base = D + 2*L_rib + 40");
+        var ribPartId=baseFam.Mark.Parts.Single(p=>p.Position=="2").Id;
+        var ribInsts=baseFam.Mark.Instances.Where(i=>i.PartId==ribPartId).ToList();
+        Check(ribInsts.Count==6&&ribInsts.All(r=>Math.Abs(Math.Sqrt(r.Placement.Origin.X*r.Placement.Origin.X+r.Placement.Origin.Y*r.Placement.Origin.Y)-360)<1e-5),"all 6 OnPipeSurface ribs sit flush on R=360 pipe wall");
+        foreach(var fam in families)
+        {
+            var instFam=NodeFamilyLibrary.Instantiate(fam,"Т-"+fam.Mark.Code,fam.Name);
+            foreach(var vt in instFam.Views)
+            {
+                var proj=ParametricProjection.Build(instFam.Mark,vt.Frame,vt.IsSection,true);
+                Check(proj.Curves.Count>0&&proj.Curves.All(ViewLineOverrides.HasSource),"family '"+fam.Name+"' view '"+vt.Name+"' builds with 100% semantic keys");
+            }
+            Check(AssemblyReporting.BuildMarkSpec(instFam.Mark).TotalMassKg>0,"family '"+fam.Name+"' produces positive spec mass");
+        }
+        // Save & Load .knfamily.json roundtrip
+        var famDir=Path.Combine(Path.GetTempPath(),"kotnode-fam-"+Guid.NewGuid());Directory.CreateDirectory(famDir);
+        try
+        {
+            var famPath=Path.Combine(famDir,"splice.knfamily.json");
+            NodeFamilyLibrary.Save(famPath,spliceFam);
+            var reloaded=NodeFamilyLibrary.Load(famPath);
+            Check(reloaded.Name==spliceFam.Name&&reloaded.Views.Count==2&&reloaded.Mark.Parameters.Count==8,"family .knfamily.json roundtrips cleanly");
+        }
+        finally{Directory.Delete(famDir,true);}
         Console.WriteLine(checks+" parametric projection checks passed");
     }
     static double Length(ParametricProjection.Curve2 c)=>c.Circular?c.Radius*c.Sweep:Math.Sqrt(Math.Pow(c.X1-c.X0,2)+Math.Pow(c.Y1-c.Y0,2));

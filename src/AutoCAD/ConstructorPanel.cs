@@ -68,8 +68,14 @@ namespace KotNode.AutoCAD
             tips.SetToolTip(moreBtn,"Редкие и служебные команды марки");
 
             moreMenu.Items.Add("Новая марка (NANEW)",null,(s,e)=>Queue("NANEW"));
-            moreMenu.Items.Add("Синхронизировать положения (NASYNC)",null,(s,e)=>Queue("NASYNC"));
+            moreMenu.Items.Add("Библиотека семейств (NAFAMILY)",null,(s,e)=>Queue("NAFAMILY"));
+            moreMenu.Items.Add("Сохранить как семейство (NAFAMILYSAVE)",null,(s,e)=>Queue("NAFAMILYSAVE"));
             moreMenu.Items.Add(new ToolStripSeparator());
+            moreMenu.Items.Add("Параметры и формулы (NAPARAMS)",null,(s,e)=>Queue("NAPARAMS"));
+            moreMenu.Items.Add("Пересчитать параметры (NASOLVE)",null,(s,e)=>Queue("NASOLVE"));
+            moreMenu.Items.Add("Выгрузить CSV (NAEXPORTCSV)",null,(s,e)=>Queue("NAEXPORTCSV"));
+            moreMenu.Items.Add(new ToolStripSeparator());
+            moreMenu.Items.Add("Синхронизировать положения (NASYNC)",null,(s,e)=>Queue("NASYNC"));
             moreMenu.Items.Add("Перевести старый вид (NAMIGRATEVIEW)",null,(s,e)=>Queue("NAMIGRATEVIEW"));
             moreMenu.Items.Add("Восстановить пропавшие детали (NAREPAIR)",null,(s,e)=>Queue("NAREPAIR"));
             moreBtn.Click+=(s,e)=>moreMenu.Show(moreBtn,new Point(0,moreBtn.Height));
@@ -180,13 +186,17 @@ namespace KotNode.AutoCAD
         TabPage BuildEditTab()
         {
             var page=new TabPage("Правка"){Padding=new Padding(4)};
-            var grid=MakeGrid(3,2);
+            var grid=MakeGrid(3,3);
             AddGridButton(grid,0,0,"Свойства","NAEDIT","Редактировать свойства определения детали (NAEDIT)");
             AddGridButton(grid,1,0,"Копировать","NACOPY","Создать копии детали с общей позицией (NACOPY)");
             AddGridButton(grid,2,0,"Массив","NAARRAY","Линейный массив детали (NAARRAY)");
             AddGridButton(grid,0,1,"Отделить поз.","NADETACH","Выделить экземпляр в отдельную позицию (NADETACH)");
             AddGridButton(grid,1,1,"Удалить","NADELETE","Удалить деталь с чертежа и из марки (NADELETE)");
             AddGridButton(grid,2,1,"Синхрон.","NASYNC","Записать положения после MOVE/ROTATE (NASYNC)");
+            var paramBtn=GridButton("Параметры / формулы","NAPARAMS","Редактор параметров и формул семейства (NAPARAMS)");
+            paramBtn.Font=new Font(Font,FontStyle.Bold);
+            grid.Controls.Add(paramBtn,0,2);grid.SetColumnSpan(paramBtn,2);
+            AddGridButton(grid,2,2,"Семейства","NAFAMILY","Вставить готовое параметрическое семейство (NAFAMILY)");
             page.Controls.Add(grid);
             return page;
         }
