@@ -28,7 +28,7 @@ namespace KotNode.AutoCAD
   [CommandMethod("NPLOG",CommandFlags.Modal)]
   public void Log(){AcApp.DocumentManager.MdiActiveDocument?.Editor.WriteMessage("\n"+(Diagnostics.LastLog??"В этом сеансе ошибок с журналом еще не было."));}
   [CommandMethod("NPVERSION",CommandFlags.Modal)]
-  public void Version(){AcApp.DocumentManager.MdiActiveDocument?.Editor.WriteMessage("\nKotNode "+Diagnostics.Version+"\nDLL: "+typeof(Commands).Assembly.Location);}
+  public void Version(){AcApp.DocumentManager.MdiActiveDocument?.Editor.WriteMessage("\nKotNode "+Diagnostics.Version+" / генератор видов "+AssemblyViews.Revision+"\nDLL: "+typeof(Commands).Assembly.Location);}
 
   static void Need(){if(panel==null||panel.Project==null)throw new InvalidOperationException("Откройте проект командой NPROJECT.");}
   static void Latest(){Need();panel.ReloadForCommand();}

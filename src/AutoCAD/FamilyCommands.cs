@@ -140,7 +140,11 @@ namespace KotNode.AutoCAD
                     AssemblyDrawing.Synchronize(doc.Database,tr,m);
                     var entries=AssemblyViews.Find(doc.Database,tr,m)
                         .Where(e=>!e.Data.ManualSnapshot&&!string.IsNullOrEmpty(e.Data.GeneratedChildHandle)).ToList();
-                    foreach(var entry in entries)ViewAnnotationDrawing.CaptureOffsets(doc.Database,tr,entry);
+                    foreach(var entry in entries)
+                    {
+                        ViewShell.RequireUnchanged(tr,entry);
+                        ViewAnnotationDrawing.CaptureOffsets(doc.Database,tr,entry);
+                    }
                     var views=entries.Select(e=>new FamilyViewTemplate
                     {
                         Id=e.Data.Id,

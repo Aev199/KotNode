@@ -119,6 +119,12 @@ static class StabilizationTests
         slitScene.AddPart(new PartDefinition{Name="Лист 2",Position="2",Kind=PartKind.RectangularPlate,Plate=new RectangularPlateShape{Length=100,Width=200,Thickness=10}},new RigidPlacement{Origin=new Vector3(.01,-100,220)});
         var preciseSlit=ParametricProjection.BuildStable(slitScene,frame).Curves.Where(c=>c.Circular&&Math.Abs(c.Radius-50)<1e-6).Sum(c=>c.Sweep);
         Check(Math.Abs(preciseSlit-2*Math.Asin(.01/50))<1e-7,"stable identity pipeline preserves narrow exact visible slit");
+        var textDim=new ViewDimension{Kind=ViewDimensionKind.Radius,AnchorA=Json.Copy(rimAnchor),TextOffsetX=42,TextOffsetY=-17};
+        ViewAnnotations.ValidateDimension(textDim);
+        var textCopy=Json.Copy(textDim);
+        Check(textCopy.TextOffsetX==42&&textCopy.TextOffsetY==-17,"dimension manual text offset survives family JSON roundtrip");
+        textDim.TextOffsetY=null;
+        Reject(()=>ViewAnnotations.ValidateDimension(textDim),"partial manual text offset rejected");
         Console.WriteLine(checks+" stabilization checks passed");
     }
 }

@@ -160,10 +160,22 @@ namespace KotNode.AutoCAD
                     Point3d actualPt,reference;
                     if(dim is RotatedDimension rd){actualPt=rd.DimLinePoint;reference=rd.XLine1Point+(rd.XLine2Point-rd.XLine1Point)*0.5;}
                     else if(dim is AlignedDimension ad){actualPt=ad.DimLinePoint;reference=ad.XLine1Point+(ad.XLine2Point-ad.XLine1Point)*0.5;}
+                    else if(dim is RadialDimension radial){reference=radial.Center;actualPt=reference;}
+                    else if(dim is DiametricDimension diameter){reference=diameter.ChordPoint+(diameter.FarChordPoint-diameter.ChordPoint)*0.5;actualPt=reference;}
                     else continue;
                     var local=actualPt.TransformBy(toLocal);var localRef=reference.TransformBy(toLocal);
-                    var offset=AnnotationPlacement.Capture(new Point2(local.X,local.Y),new Point2(localRef.X,localRef.Y),lastRef,delta);
-                    modelDim.OffsetX=offset.X;modelDim.OffsetY=offset.Y;
+                    if(dim is RotatedDimension||dim is AlignedDimension)
+                    {
+                        var offset=AnnotationPlacement.Capture(new Point2(local.X,local.Y),new Point2(localRef.X,localRef.Y),lastRef,delta);
+                        modelDim.OffsetX=offset.X;modelDim.OffsetY=offset.Y;
+                    }
+                    if(!dim.UsingDefaultTextPosition)
+                    {
+                        var text=dim.TextPosition.TransformBy(toLocal);
+                        var offset=AnnotationPlacement.Capture(new Point2(text.X,text.Y),new Point2(localRef.X,localRef.Y),lastRef,delta);
+                        modelDim.TextOffsetX=offset.X;modelDim.TextOffsetY=offset.Y;
+                    }
+                    else {modelDim.TextOffsetX=null;modelDim.TextOffsetY=null;}
                 }
                 else if(tag.Kind=="leader"&&e is MLeader ml)
                 {
@@ -225,6 +237,13 @@ namespace KotNode.AutoCAD
                 dim.DimensionText=rd.Source.TextOverride??"";
                 dim.Annotative=AnnotativeStates.False;
                 ApplyDimensionGeometry(dim,xform,rd);
+                if(rd.Source.TextOffsetX.HasValue&&rd.Source.TextOffsetY.HasValue)
+                {
+                    var origin=rd.Center??new Point2((rd.A.X+rd.B.X)/2,(rd.A.Y+rd.B.Y)/2);
+                    dim.TextPosition=ToWorld(xform,new Point2(origin.X+rd.Source.TextOffsetX.Value,origin.Y+rd.Source.TextOffsetY.Value));
+                    dim.UsingDefaultTextPosition=false;
+                }
+                else dim.UsingDefaultTextPosition=true;
                 dim.RecomputeDimensionBlock(true);
                 double refX=rd.Center!=null?rd.Center.X:(rd.A.X+rd.B.X)/2;
                 double refY=rd.Center!=null?rd.Center.Y:(rd.A.Y+rd.B.Y)/2;
@@ -256,10 +275,12 @@ namespace KotNode.AutoCAD
                     space.AppendEntity(ml);tr.AddNewlyCreatedDBObject(ml,true);
                 }
                 else ml.UpgradeOpen();
+                ml.TextHeight=scale*2.5;ml.ArrowSize=scale*2.5;ml.DoglegLength=scale*5;
                 using(var mtext=fresh?new MText():ml.MText)
                 {
                     mtext.Contents=rl.Text;
-                    if(fresh){mtext.TextHeight=scale*2.5;mtext.TextStyleId=textStyle;}
+                    mtext.TextHeight=scale*2.5;
+                    if(fresh)mtext.TextStyleId=textStyle;
                     ml.MText=mtext;
                 }
                 var tipWorld=ToWorld(xform,rl.Tip);

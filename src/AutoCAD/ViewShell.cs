@@ -62,6 +62,12 @@ namespace KotNode.AutoCAD
         internal static BlockReference RequireUnchanged(Transaction tr,AssemblyViews.Entry entry)
         {
             var data=entry.Data;
+            var outer=entry.Reference;
+            var outerScale=outer.ScaleFactors;
+            if(Math.Abs(outer.Position.Z)>1e-8||Math.Abs(outer.Rotation)>1e-8||
+                Math.Abs(outerScale.X-1)>1e-8||Math.Abs(outerScale.Y-1)>1e-8||Math.Abs(outerScale.Z-1)>1e-8||
+                (outer.Normal-Vector3d.ZAxis).Length>1e-8)
+                throw new InvalidOperationException("Для размещения вида поддерживается MOVE в мировой XY без масштаба и поворота. Направление проекции меняйте через NAEDITVIEW.");
             var shell=(BlockTableRecord)tr.GetObject(entry.Reference.BlockTableRecord,OpenMode.ForRead);
             var child=shell.Cast<ObjectId>().Where(id=>!id.IsErased)
                 .Select(id=>tr.GetObject(id,OpenMode.ForRead) as BlockReference)

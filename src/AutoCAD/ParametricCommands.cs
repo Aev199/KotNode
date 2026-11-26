@@ -181,14 +181,20 @@ namespace KotNode.AutoCAD
             LoadGrids();
         }
 
+        void EditSafely(Action action)
+        {
+            try{action();}
+            catch(System.Exception ex){MessageBox.Show(ex.Message,"Параметры",MessageBoxButtons.OK,MessageBoxIcon.Warning);}
+        }
+
         TabPage BuildParamsTab()
         {
             var tab=new TabPage("Параметры узла"){Padding=new Padding(4)};
             var bar=new FlowLayoutPanel{Dock=DockStyle.Top,AutoSize=true};
             var add=new Button{Text="+ Параметр",AutoSize=true,Height=26,FlatStyle=FlatStyle.System};
             var del=new Button{Text="Удалить",AutoSize=true,Height=26,FlatStyle=FlatStyle.System};
-            add.Click+=(s,e)=>{ReadParamsFromGrid();mark.Parameters.Add(new MarkParameter{Name="P"+(mark.Parameters.Count+1),Label="Параметр",Value=100});LoadGrids();};
-            del.Click+=(s,e)=>{if(paramsGrid.CurrentRow!=null){ReadParamsFromGrid();mark.Parameters.RemoveAt(paramsGrid.CurrentRow.Index);LoadGrids();}};
+            add.Click+=(s,e)=>EditSafely(()=>{ReadParamsFromGrid();mark.Parameters.Add(new MarkParameter{Name="P"+(mark.Parameters.Count+1),Label="Параметр",Value=100});LoadGrids();});
+            del.Click+=(s,e)=>EditSafely(()=>{if(paramsGrid.CurrentRow!=null){ReadParamsFromGrid();mark.Parameters.RemoveAt(paramsGrid.CurrentRow.Index);LoadGrids();}});
             bar.Controls.Add(add);bar.Controls.Add(del);
             paramsGrid.Columns.Add("Name","Имя");paramsGrid.Columns[0].FillWeight=16;
             paramsGrid.Columns.Add("Label","Описание");paramsGrid.Columns[1].FillWeight=34;
@@ -205,8 +211,8 @@ namespace KotNode.AutoCAD
             var bar=new FlowLayoutPanel{Dock=DockStyle.Top,AutoSize=true};
             var add=new Button{Text="+ Привязка размера",AutoSize=true,Height=26,FlatStyle=FlatStyle.System};
             var del=new Button{Text="Удалить",AutoSize=true,Height=26,FlatStyle=FlatStyle.System};
-            add.Click+=(s,e)=>AddBinding();
-            del.Click+=(s,e)=>{if(bindingsGrid.CurrentRow!=null){ReadParamsFromGrid();mark.Bindings.RemoveAt(bindingsGrid.CurrentRow.Index);LoadGrids();}};
+            add.Click+=(s,e)=>EditSafely(AddBinding);
+            del.Click+=(s,e)=>EditSafely(()=>{if(bindingsGrid.CurrentRow!=null){ReadParamsFromGrid();mark.Bindings.RemoveAt(bindingsGrid.CurrentRow.Index);LoadGrids();}});
             bar.Controls.Add(add);bar.Controls.Add(del);
             bindingsGrid.ReadOnly=true;
             bindingsGrid.Columns.Add("Part","Деталь");
@@ -248,8 +254,8 @@ namespace KotNode.AutoCAD
             var bar=new FlowLayoutPanel{Dock=DockStyle.Top,AutoSize=true};
             var add=new Button{Text="+ Правило (3D-угол / массив)",AutoSize=true,Height=26,FlatStyle=FlatStyle.System};
             var del=new Button{Text="Удалить",AutoSize=true,Height=26,FlatStyle=FlatStyle.System};
-            add.Click+=(s,e)=>AddPlacementRule();
-            del.Click+=(s,e)=>{if(rulesGrid.CurrentRow!=null){ReadParamsFromGrid();mark.PlacementRules.RemoveAt(rulesGrid.CurrentRow.Index);LoadGrids();}};
+            add.Click+=(s,e)=>EditSafely(AddPlacementRule);
+            del.Click+=(s,e)=>EditSafely(()=>{if(rulesGrid.CurrentRow!=null){ReadParamsFromGrid();mark.PlacementRules.RemoveAt(rulesGrid.CurrentRow.Index);LoadGrids();}});
             bar.Controls.Add(add);bar.Controls.Add(del);
             rulesGrid.ReadOnly=true;
             rulesGrid.Columns.Add("Kind","Правило");

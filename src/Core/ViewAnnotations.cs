@@ -34,6 +34,8 @@ namespace KotNode.Core
         public double OffsetX { get; set; }
         public double OffsetY { get; set; }
         public string TextOverride { get; set; }="";
+        public double? TextOffsetX { get; set; }
+        public double? TextOffsetY { get; set; }
         public int Precision { get; set; }
     }
     public enum ViewLeaderKind { Position=0, Weld=1, Note=2 }
@@ -121,6 +123,8 @@ namespace KotNode.Core
             if(d==null||d.Id==Guid.Empty||!Enum.IsDefined(typeof(ViewDimensionKind),d.Kind)||
                 !Guard.Finite(d.OffsetX)||!Guard.Finite(d.OffsetY)||d.Precision<0||d.Precision>4)
                 throw new InvalidDataException("Повреждена запись ассоциативного размера.");
+            if(d.TextOffsetX.HasValue!=d.TextOffsetY.HasValue||(d.TextOffsetX.HasValue&&(!Guard.Finite(d.TextOffsetX.Value)||!Guard.Finite(d.TextOffsetY.Value))))
+                throw new InvalidDataException("Неверное ручное положение текста размера.");
             ValidateAnchor(d.AnchorA);
             if(d.Kind==ViewDimensionKind.Horizontal||d.Kind==ViewDimensionKind.Vertical||d.Kind==ViewDimensionKind.Aligned)
                 ValidateAnchor(d.AnchorB);

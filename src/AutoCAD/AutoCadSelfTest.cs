@@ -183,6 +183,13 @@ namespace KotNode.AutoCAD
                         ViewAnnotationDrawing.CaptureOffsets(scratch,tr,topEntry);
                         Assert(Math.Abs(topEntry.Data.Dimensions[0].OffsetY-(savedOffset-25))<1e-6,
                             "Family export captures fresh dimension grip movement",log);
+                        managedDim.TextPosition+=new Vector3d(15,25,0);
+                        managedDim.UsingDefaultTextPosition=false;
+                        var draggedText=managedDim.TextPosition;
+                        ViewAnnotationDrawing.CaptureOffsets(scratch,tr,topEntry);
+                        AssemblyViews.Rebuild(scratch,tr,mark,refs,topEntry);
+                        Assert(managedDim.TextPosition.DistanceTo(draggedText)<1e-5,
+                            "Manually dragged native dimension text survives rebuild and family export capture",log);
                         var shell=(BlockTableRecord)tr.GetObject(topEntry.Reference.BlockTableRecord,OpenMode.ForWrite);
                         var userLine=new Line(new Point3d(-10,-10,0),new Point3d(10,10,0));
                         shell.AppendEntity(userLine);tr.AddNewlyCreatedDBObject(userLine,true);
