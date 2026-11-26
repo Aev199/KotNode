@@ -156,6 +156,50 @@ namespace KotNode.AutoCAD
                         Assert(posLeaders.Any(t=>t.Contains("Поз. 99")),"In-place MLeader text updated dynamically to 'Поз. 99'",log);
                         Assert(posLeaders.Any(t=>t.Contains("8")&&t.Contains("монт.")),"Weld MLeader formatted GOST leg k=8 (монт.)",log);
 
+                        // Stabilization: view-only MOVE and combined MOVE must preserve
+                        // paper offsets. Also roundtrip native manual shell content.
+                        var managedDim=ms.Cast<ObjectId>().Where(id=>!id.IsErased)
+                            .Select(id=>tr.GetObject(id,OpenMode.ForRead)).OfType<RotatedDimension>().First();
+                        double savedOffset=topEntry.Data.Dimensions[0].OffsetY;
+                        var beforeLine=managedDim.DimLinePoint;
+                        topEntry.Reference.UpgradeOpen();
+                        topEntry.Reference.TransformBy(Matrix3d.Displacement(new Vector3d(75,40,0)));
+                        AssemblyViews.Rebuild(scratch,tr,mark,refs,topEntry);
+                        Assert(Math.Abs(topEntry.Data.Dimensions[0].OffsetY-savedOffset)<1e-6&&
+                            managedDim.DimLinePoint.DistanceTo(beforeLine+new Vector3d(75,40,0))<1e-5,
+                            "View-only MOVE carries dimension line without changing manual offset",log);
+                        var annotationSpace=AssemblyDrawing.ModelSpace(scratch,tr);
+                        foreach(ObjectId id in annotationSpace)
+                        {
+                            var entity=tr.GetObject(id,OpenMode.ForRead) as Entity;
+                            if(entity is Dimension||entity is MLeader)
+                            {entity.UpgradeOpen();entity.TransformBy(Matrix3d.Displacement(new Vector3d(20,10,0)));}
+                        }
+                        topEntry.Reference.TransformBy(Matrix3d.Displacement(new Vector3d(20,10,0)));
+                        AssemblyViews.Rebuild(scratch,tr,mark,refs,topEntry);
+                        Assert(Math.Abs(topEntry.Data.Dimensions[0].OffsetY-savedOffset)<1e-6,
+                            "Combined view+annotation MOVE avoids duplicate displacement",log);
+                        managedDim.DimLinePoint+=new Vector3d(0,-25,0);
+                        ViewAnnotationDrawing.CaptureOffsets(scratch,tr,topEntry);
+                        Assert(Math.Abs(topEntry.Data.Dimensions[0].OffsetY-(savedOffset-25))<1e-6,
+                            "Family export captures fresh dimension grip movement",log);
+                        var shell=(BlockTableRecord)tr.GetObject(topEntry.Reference.BlockTableRecord,OpenMode.ForWrite);
+                        var userLine=new Line(new Point3d(-10,-10,0),new Point3d(10,10,0));
+                        shell.AppendEntity(userLine);tr.AddNewlyCreatedDBObject(userLine,true);
+                        var userText=new DBText{TextString="USER FAMILY DETAIL",Position=new Point3d(30,30,0),Height=5};
+                        shell.AppendEntity(userText);tr.AddNewlyCreatedDBObject(userText,true);
+                        string payload=FamilyManualGraphics.Export(scratch,tr,topEntry);
+                        var reusedData=KotNode.Core.Json.Copy(topEntry.Data);
+                        reusedData.Id=Guid.NewGuid();reusedData.GeneratedChildHandle=null;reusedData.GeneratedStamp=null;
+                        var reused=AssemblyViews.Create(scratch,tr,mark,refs,reusedData,new Point3d(8000,0,0));
+                        FamilyManualGraphics.Import(scratch,tr,reused,payload);
+                        var reusedShell=(BlockTableRecord)tr.GetObject(reused.BlockTableRecord,OpenMode.ForRead);
+                        Assert(reusedShell.Cast<ObjectId>().Any(id=>tr.GetObject(id,OpenMode.ForRead) is DBText text&&text.TextString=="USER FAMILY DETAIL"),
+                            "Native manual text and graphics survive DWG family payload roundtrip",log);
+                        var newDims=annotationSpace.Cast<ObjectId>().Where(id=>!id.IsErased)
+                            .Count(id=>tr.GetObject(id,OpenMode.ForRead) is Dimension);
+                        Assert(newDims==4,"Family dimensions created immediately without extra update",log);
+
                         // Stage 6 & 7: Native Tables (NASPEC, NAVRS, NAPROJVRS) + Update in-place
                         var msW=AssemblyDrawing.ModelSpace(scratch,tr,OpenMode.ForWrite);
                         var specTbl=AssemblyTableDrawing.RenderTable(scratch,tr,msW,null,new Point3d(4500,500,0),20,AssemblyReporting.BuildMarkSpec(mark));

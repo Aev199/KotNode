@@ -67,7 +67,7 @@ namespace KotNode.AutoCAD
                         {
                             var data=new AssemblyViews.ViewData
                             {
-                                Name=vt.Name,IsSection=vt.IsSection,FullCut=vt.FullCut,
+                                Id=vt.Id,Name=vt.Name,IsSection=vt.IsSection,FullCut=vt.FullCut,
                                 Hidden=vt.Hidden,NoHatch=vt.NoHatch,AnnotationScale=vt.AnnotationScale,
                                 ParametricPrototype=true,Frame=vt.Frame,
                                 FrameAnchorId=vt.FrameAnchorId,
@@ -80,6 +80,7 @@ namespace KotNode.AutoCAD
                                 SectionCallouts=vt.SectionCallouts??new List<ViewSectionCallout>()
                             };
                             var vref=AssemblyViews.Create(doc.Database,tr,mark,refs,data,new Point3d(vt.OffsetX,vt.OffsetY,0));
+                            FamilyManualGraphics.Import(doc.Database,tr,vref,vt.ManualGraphicsDwg);
                             try
                             {
                                 var ext=vref.GeometricExtents;
@@ -90,6 +91,7 @@ namespace KotNode.AutoCAD
                             catch { if(vt.OffsetX+1200>maxViewX)maxViewX=vt.OffsetX+1200; }
                         }
                     }
+                    AssemblyViews.Update(doc.Database,tr,mark,refs);
                     double tableX=maxViewX+600;
                     double nextTableY=maxViewY;
                     var space=AssemblyDrawing.ModelSpace(doc.Database,tr,OpenMode.ForWrite);
@@ -136,24 +138,26 @@ namespace KotNode.AutoCAD
                     var m=AssemblyDrawing.Load(doc.Database,tr);
                     if(m==null)throw new InvalidOperationException("В текущем DWG нет марки для сохранения в семейство.");
                     AssemblyDrawing.Synchronize(doc.Database,tr,m);
-                    var views=AssemblyViews.Find(doc.Database,tr,m)
-                        .Where(e=>!e.Data.ManualSnapshot&&!string.IsNullOrEmpty(e.Data.GeneratedChildHandle))
-                        .Select(e=>new FamilyViewTemplate
-                        {
-                            Name=e.Data.Name,IsSection=e.Data.IsSection,FullCut=e.Data.FullCut,
-                            Hidden=e.Data.Hidden,NoHatch=e.Data.NoHatch,
-                            AnnotationScale=e.Data.AnnotationScale>0?e.Data.AnnotationScale:20,
-                            Frame=ModelJson.Copy(e.Data.Frame),
-                            FrameAnchorId=e.Data.FrameAnchorId,
-                            RelativeFrame=e.Data.RelativeFrame==null?null:ModelJson.Copy(e.Data.RelativeFrame),
-                            OffsetX=e.Reference.Position.X,OffsetY=e.Reference.Position.Y,
-                            LineOverrides=ModelJson.Copy(e.Data.LineOverrides??new List<ViewLineOverride>()),
-                            Welds=ModelJson.Copy(e.Data.Welds??new List<ViewWeldOverlay>()),
-                            Dimensions=ModelJson.Copy(e.Data.Dimensions??new List<ViewDimension>()),
-                            Leaders=ModelJson.Copy(e.Data.Leaders??new List<ViewLeader>()),
-                            Axes=ModelJson.Copy(e.Data.Axes??new List<ViewAxisMark>()),
-                            SectionCallouts=ModelJson.Copy(e.Data.SectionCallouts??new List<ViewSectionCallout>())
-                        }).ToList();
+                    var entries=AssemblyViews.Find(doc.Database,tr,m)
+                        .Where(e=>!e.Data.ManualSnapshot&&!string.IsNullOrEmpty(e.Data.GeneratedChildHandle)).ToList();
+                    foreach(var entry in entries)ViewAnnotationDrawing.CaptureOffsets(doc.Database,tr,entry);
+                    var views=entries.Select(e=>new FamilyViewTemplate
+                    {
+                        Id=e.Data.Id,
+                        ManualGraphicsDwg=FamilyManualGraphics.Export(doc.Database,tr,e),
+                        Name=e.Data.Name,IsSection=e.Data.IsSection,FullCut=e.Data.FullCut,
+                        Hidden=e.Data.Hidden,NoHatch=e.Data.NoHatch,
+                        AnnotationScale=e.Data.AnnotationScale>0?e.Data.AnnotationScale:20,
+                        Frame=ModelJson.Copy(e.Data.Frame),FrameAnchorId=e.Data.FrameAnchorId,
+                        RelativeFrame=e.Data.RelativeFrame==null?null:ModelJson.Copy(e.Data.RelativeFrame),
+                        OffsetX=e.Reference.Position.X,OffsetY=e.Reference.Position.Y,
+                        LineOverrides=ModelJson.Copy(e.Data.LineOverrides??new List<ViewLineOverride>()),
+                        Welds=ModelJson.Copy(e.Data.Welds??new List<ViewWeldOverlay>()),
+                        Dimensions=ModelJson.Copy(e.Data.Dimensions??new List<ViewDimension>()),
+                        Leaders=ModelJson.Copy(e.Data.Leaders??new List<ViewLeader>()),
+                        Axes=ModelJson.Copy(e.Data.Axes??new List<ViewAxisMark>()),
+                        SectionCallouts=ModelJson.Copy(e.Data.SectionCallouts??new List<ViewSectionCallout>())
+                    }).ToList();
                     template=new NodeFamilyTemplate
                     {
                         Name=m.Name,Category="Пользовательские семейства",

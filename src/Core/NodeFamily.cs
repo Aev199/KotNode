@@ -9,6 +9,9 @@ namespace KotNode.Core
     // Stage 9: Reusable parametric node family template (.knfamily.json).
     public sealed class FamilyViewTemplate
     {
+        public Guid Id { get; set; }=Guid.NewGuid();
+        // Native user graphics in local view coordinates, including dependent styles/blocks.
+        public string ManualGraphicsDwg { get; set; }
         public string Name { get; set; }="Вид 1";
         public bool IsSection { get; set; }
         public bool FullCut { get; set; }
@@ -80,6 +83,30 @@ namespace KotNode.Core
                     if(string.IsNullOrWhiteSpace(p.Formula)&&overrides.TryGetValue(p.Name,out var val))
                         p.Value=val;
                 }
+            }
+            if(copy.Views!=null)
+            {
+                var viewIds=new Dictionary<Guid,Guid>();
+                foreach(var v in copy.Views)
+                {
+                    if(v.Id!=Guid.Empty)Guard.Require(!viewIds.ContainsKey(v.Id),"Повторный идентификатор вида семейства.");
+                    var old=v.Id;v.Id=Guid.NewGuid();
+                    if(old!=Guid.Empty)viewIds.Add(old,v.Id);
+                }
+                foreach(var v in copy.Views)
+                    foreach(var callout in v.SectionCallouts??new List<ViewSectionCallout>())
+                    {
+                        if(callout.TargetViewId==Guid.Empty)continue;
+                        if(viewIds.TryGetValue(callout.TargetViewId,out var newId))callout.TargetViewId=newId;
+                        else
+                        {
+                            // Old templates had no view IDs: recover only an unambiguous
+                            // explicit name, never guess a destination from list order.
+                            var targets=copy.Views.Where(x=>x.Name==callout.Label).ToList();
+                            Guard.Require(targets.Count==1,"Старое семейство: невозможно восстановить связь разреза «"+callout.Label+"». Сохраните семейство заново из исходного DWG.");
+                            callout.TargetViewId=targets[0].Id;
+                        }
+                    }
             }
             ParametricEngine.Solve(copy.Mark);
             if(copy.Views!=null)

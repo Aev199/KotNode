@@ -56,6 +56,14 @@ static class StabilizationTests
         Check(off.X==20&&off.Y==30,"moving view and annotations together applies no duplicate displacement");
         off=AnnotationPlacement.Capture(new Point2(140,250),last,last,new Point2(0,0));
         Check(off.X==40&&off.Y==50,"manual dimension line and landing offsets preserved");
+        var template=NodeFamilyLibrary.BuiltIn()[0];
+        var oldTarget=template.Views[1].Id;
+        template.Views[0].SectionCallouts.Add(new ViewSectionCallout{TargetViewId=oldTarget,Label="1-1"});
+        template.Views[0].ManualGraphicsDwg="payload-roundtrip";
+        var inserted=NodeFamilyLibrary.Instantiate(template,"REUSE","Повторная вставка");
+        Check(inserted.Views[1].Id!=oldTarget&&inserted.Views[0].SectionCallouts[0].TargetViewId==inserted.Views[1].Id,"family callouts remapped to new view IDs");
+        Check(template.Views[0].SectionCallouts[0].TargetViewId==oldTarget,"family instantiation preserves original template links");
+        Check(Json.Copy(inserted).Views[0].ManualGraphicsDwg=="payload-roundtrip","native manual graphics payload survives JSON roundtrip");
         Console.WriteLine(checks+" stabilization checks passed");
     }
 }
