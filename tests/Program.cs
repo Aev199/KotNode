@@ -54,6 +54,7 @@ class Program
   Check(ViewGeometryStamp.Record("ab","c")!=ViewGeometryStamp.Record("a","bc"),"view stamp field delimiters unambiguous");
   Check(ViewGeometryStamp.Record((string)null)!=ViewGeometryStamp.Record(""),"view stamp null distinct");
   StabilizationTests.Run();
+  WeldEditingTests.Run();
   ParametricProjectionTests.Run();
   SectionHatchBoundaryTests.Run();
   TableMergeTests.Run();

@@ -217,6 +217,8 @@ namespace KotNode.AutoCAD
             grid.SetColumnSpan(lineEdit,2);
             AddGridButton(grid,2,2,"Сброс линий","NALINERESET","Отменить ручные правки линий вида (NALINERESET)");
             var weldBtn=GridButton("Сварные швы","NAWELD","Нанести параметрические сварные швы по кромкам вида (NAWELD)");
+            weldBtn.ContextMenuStrip=new ContextMenuStrip();
+            weldBtn.ContextMenuStrip.Items.Add("Изменить существующий шов (катет, сторона, отступ)",null,(s,e)=>Queue("NAWELDEDIT"));
             grid.Controls.Add(weldBtn,0,3);
             grid.SetColumnSpan(weldBtn,2);
             AddGridButton(grid,2,3,"Сброс швов","NAWELDRESET","Удалить параметрические сварные швы вида (NAWELDRESET)");

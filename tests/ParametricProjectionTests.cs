@@ -324,7 +324,7 @@ static class ParametricProjectionTests
         Check(unmatchedA==0&&resPos2[0].Text=="Поз. 12"&&Math.Abs(resPos2[0].Tip.X-400)<1e-6,"position leader updates both text and tip on part edit");
         var weldLeader=new ViewLeader{Kind=ViewLeaderKind.Weld,Target=new ViewAnchor{Kind=ViewAnchorKind.WeldMidpoint,WeldId=siteWelds[0].Id},LandingOffsetX=20,LandingOffsetY=-30};
         var resWL=ViewAnnotations.ResolveLeaders(new[]{weldLeader},plateMark,plateView.Curves,siteWelds,10,out unmatchedA);
-        Check(unmatchedA==0&&resWL[0].Text.Contains("8")&&resWL[0].Text.Contains("монт."),"weld leader formats GOST leg and site label");
+        Check(unmatchedA==0&&resWL[0].Text=="8","SPDS weld leader uses numeric leg without text substitute for mounting symbol");
         // Section callout links to section view name dynamically
         var secId=Guid.NewGuid();
         var callout=new ViewSectionCallout{Start=snapEndA.Anchor,End=snapEndB.Anchor,TargetViewId=secId,Label="1-1"};

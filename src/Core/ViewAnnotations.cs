@@ -319,8 +319,7 @@ namespace KotNode.Core
                 var w=(welds??Enumerable.Empty<ViewWeldOverlay>()).FirstOrDefault(x=>x.Id==leader.Target.WeldId||x.GroupId==leader.Target.WeldId);
                 if(w==null)return "Шов";
                 string k=w.LegMm.ToString("0.#",CultureInfo.InvariantCulture);
-                string suffix=w.Style==ViewWeldStyle.Site?" (монт.)":"";
-                return "{\\fArial|b0|i0;\\U+25B3}"+k+suffix;
+                return k; // ГОСТ 21.502, table A.2: numeric fillet leg; graphic identifies mounting/factory.
             }
             return "";
         }

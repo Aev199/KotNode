@@ -98,6 +98,10 @@ namespace KotNode.AutoCAD
             double scale=data.AnnotationScale>0?data.AnnotationScale:20;
             var weldStrokes=ViewWelds.Build(rawCurves,data.Welds,scale,out var unmatchedWelds);
             data.UnmatchedWelds=unmatchedWelds;
+            var sectionWelds=data.IsSection
+                ? WeldSections.Build(mark,data.Frame,AssemblyViews.Find(db,tr,mark).Where(v=>v.Data.Id!=data.Id)
+                    .SelectMany(v=>v.Data.Welds??new List<ViewWeldOverlay>()).Concat(data.Welds??new List<ViewWeldOverlay>()))
+                : new List<WeldCutPatch>();
             var axisStrokes=ViewAnnotations.BuildAxes(data.Axes,rawCurves,scale,out var unmatchedAxes);
             var callouts=ViewAnnotations.BuildSectionCallouts(data.SectionCallouts,rawCurves,viewNameLookup,scale,out var unmatchedCallouts);
             data.UnmatchedAnnotations=unmatchedAxes+unmatchedCallouts;
@@ -135,6 +139,14 @@ namespace KotNode.AutoCAD
                     var entity=(Entity)tr.GetObject(lineId,OpenMode.ForWrite);
                     entity.LinetypeId=stroke.Hidden?dashed:continuous;
                     entity.LinetypeScale=ltScale;
+                }
+            foreach(var patch in sectionWelds)
+                for(int i=1;i<patch.Points.Count-1;i++)
+                {
+                    var a=patch.Points[0];var b=patch.Points[i];var c=patch.Points[i+1];
+                    var solid=new Solid(new Point3d(a.X,a.Y,0),new Point3d(b.X,b.Y,0),new Point3d(c.X,c.Y,0),new Point3d(c.X,c.Y,0));
+                    solid.SetDatabaseDefaults(db);solid.Layer=AssemblyViews.WeldLayer;solid.ColorIndex=256;
+                    block.AppendEntity(solid);tr.AddNewlyCreatedDBObject(solid,true);
                 }
             if(axisStrokes.Count>0&&types.Has("NA_CENTER"))
             {

@@ -1136,6 +1136,7 @@ namespace KotNode.AutoCAD
                     if(entry.Data.Welds==null)entry.Data.Welds=new List<ViewWeldOverlay>();
                     entry.Data.Welds.AddRange(allWelds);
                     AssemblyViews.Rebuild(doc.Database,tr,m,refs,entry);
+                    AssemblyViews.Update(doc.Database,tr,m,refs);
                     AssemblyDrawing.Save(doc.Database,tr,m);
                     unmatched=entry.Data.UnmatchedWelds;
                     tr.Commit();
@@ -1185,6 +1186,7 @@ namespace KotNode.AutoCAD
                 welds.RemoveAll(r=>r.BatchId==batch);
             }
             AssemblyViews.Rebuild(doc.Database,tr,m,refs,entry);
+            AssemblyViews.Update(doc.Database,tr,m,refs);
             AssemblyDrawing.Save(doc.Database,tr,m);
             ed.WriteMessage("\nОсталось сварных швов: "+welds.Count);
         });

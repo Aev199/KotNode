@@ -202,11 +202,14 @@ namespace KotNode.AutoCAD
             var land=ed.GetPoint("\nПоложение полки выноски шва: ");
             if(land.Status!=PromptStatus.OK)return;
             var locLand=land.Value.TransformBy(ed.CurrentUserCoordinateSystem).TransformBy(bestView.ToLocal);
+            var weldAnchor=new ViewAnchor{Kind=ViewAnchorKind.WeldMidpoint,WeldId=bestWeld.Id};
+            var anchorPoint=ViewAnnotations.ResolveAnchor(weldAnchor,bestView.RawCurves,bestView.Welds,bestView.AnnotationScale,out _);
+            if(anchorPoint==null)throw new InvalidOperationException("Не удалось разрешить привязку шва.");
             var leader=new ViewLeader
             {
                 Kind=ViewLeaderKind.Weld,
-                Target=new ViewAnchor{Kind=ViewAnchorKind.WeldMidpoint,WeldId=bestWeld.Id},
-                LandingOffsetX=locLand.X-bestMid.X,LandingOffsetY=locLand.Y-bestMid.Y
+                Target=weldAnchor,
+                LandingOffsetX=locLand.X-anchorPoint.X,LandingOffsetY=locLand.Y-anchorPoint.Y
             };
             CommitViewMutation(doc,bestView.ViewId,d=>{if(d.Leaders==null)d.Leaders=new List<ViewLeader>();d.Leaders.Add(leader);});
             ed.WriteMessage("\nВыноска сварного шва добавлена.");

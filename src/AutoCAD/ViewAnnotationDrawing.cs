@@ -71,7 +71,12 @@ namespace KotNode.AutoCAD
         {
             EnsureStylesAndLayers(db,tr);
             var styles=(DimStyleTable)tr.GetObject(db.DimStyleTableId,OpenMode.ForRead);
-            if(styles.Has("NA_DIM_1"))return styles["NA_DIM_1"];
+            if(styles.Has("NA_DIM_1"))
+            {
+                var existing=(DimStyleTableRecord)tr.GetObject(styles["NA_DIM_1"],OpenMode.ForWrite);
+                existing.Dimtsz=1.25;existing.Dimdle=1.25;
+                return existing.ObjectId;
+            }
             var blocks=(BlockTable)tr.GetObject(db.BlockTableId,OpenMode.ForRead);
             ObjectId tick;
             if(blocks.Has("NA_TICK_1"))tick=blocks["NA_TICK_1"];
@@ -87,7 +92,7 @@ namespace KotNode.AutoCAD
             var st=new DimStyleTableRecord
             {
                 Name="NA_DIM_1",Dimtxsty=TextStyleId(db,tr),Dimtxt=2.5,Dimasz=1.875,Dimdec=0,
-                Dimtad=1,Dimexe=1.125,Dimexo=0.625,Dimgap=0.625,Dimdle=0,Dimtix=false,Dimtmove=2,
+                Dimtad=1,Dimexe=1.125,Dimexo=0.625,Dimgap=0.625,Dimdle=1.25,Dimtsz=1.25,Dimtix=false,Dimtmove=2,
                 Dimblk=tick,Dimblk1=tick,Dimblk2=tick,Dimsah=true,Dimtoh=false,Dimtih=false
             };
             var id=styles.Add(st);tr.AddNewlyCreatedDBObject(st,true);
@@ -233,7 +238,7 @@ namespace KotNode.AutoCAD
                 dim.DimensionStyle=dimStyle;
                 dim.Layer=AnnoLayer;
                 dim.Dimscale=scale;
-                dim.Dimtxt=2.5;dim.Dimasz=1.875;dim.Dimlfac=1;dim.Dimdec=rd.Source.Precision;
+                dim.Dimtxt=2.5;dim.Dimasz=1.875;dim.Dimtsz=1.25;dim.Dimdle=1.25;dim.Dimsd1=false;dim.Dimsd2=false;dim.Dimlfac=1;dim.Dimdec=rd.Source.Precision;
                 dim.DimensionText=rd.Source.TextOverride??"";
                 dim.Annotative=AnnotativeStates.False;
                 ApplyDimensionGeometry(dim,xform,rd);
@@ -276,6 +281,11 @@ namespace KotNode.AutoCAD
                 }
                 else ml.UpgradeOpen();
                 ml.TextHeight=scale*2.5;ml.ArrowSize=scale*2.5;ml.DoglegLength=scale*5;
+                if(rl.Source.Kind==ViewLeaderKind.Weld)
+                {
+                    ml.SetTextAttachmentType(TextAttachmentType.AttachmentBottomLine,LeaderDirectionType.LeftLeader);
+                    ml.SetTextAttachmentType(TextAttachmentType.AttachmentBottomLine,LeaderDirectionType.RightLeader);
+                }
                 using(var mtext=fresh?new MText():ml.MText)
                 {
                     mtext.Contents=rl.Text;

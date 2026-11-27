@@ -19,6 +19,8 @@ namespace KotNode.Core
         public ViewWeldStyle Style { get; set; }=ViewWeldStyle.Site;
         public ViewWeldSide Side { get; set; }=ViewWeldSide.Left;
         public double LegMm { get; set; }=6;
+        public double OffsetMm { get; set; }
+        public bool? ShowInSections { get; set; }
     }
     public sealed class WeldStroke
     {
@@ -37,7 +39,7 @@ namespace KotNode.Core
             if(w==null||w.Id==Guid.Empty||w.InstanceId==Guid.Empty||string.IsNullOrWhiteSpace(w.SourceKey)||
                 !Guard.Finite(w.From)||!Guard.Finite(w.To)||w.From<-E||w.To>1+E||w.To-w.From<=E||
                 !Enum.IsDefined(typeof(ViewWeldStyle),w.Style)||!Enum.IsDefined(typeof(ViewWeldSide),w.Side)||
-                !Guard.Finite(w.LegMm)||w.LegMm<=0||w.LegMm>100)
+                !Guard.Finite(w.LegMm)||w.LegMm<=0||w.LegMm>100||!Guard.Finite(w.OffsetMm))
                 throw new InvalidDataException("Повреждена запись параметрического сварного шва.");
         }
         public static ViewWeldSide SideFromPoint(CurveChain chain,double x,double y)
@@ -127,6 +129,7 @@ namespace KotNode.Core
                 {
                     SampleAt(chain,L*(i+0.5)/count,out var px,out var py,out var tx,out var ty);
                     double nx=-ty,ny=tx;
+                    px+=nx*w.OffsetMm;py+=ny*w.OffsetMm;
                     double cx=px+nx*off,cy=py+ny*off;
                     double d1x=(tx+nx)*r*0.7071067811865476,d1y=(ty+ny)*r*0.7071067811865476;
                     double d2x=(tx-nx)*r*0.7071067811865476,d2y=(ty-ny)*r*0.7071067811865476;
@@ -144,6 +147,7 @@ namespace KotNode.Core
                 {
                     SampleAt(chain,L*(i+0.5)/count,out var px,out var py,out var tx,out var ty);
                     double nx=-ty,ny=tx;
+                    px+=nx*w.OffsetMm;py+=ny*w.OffsetMm;
                     if(sideSign==0)
                     {
                         double h=tickLen*0.6;

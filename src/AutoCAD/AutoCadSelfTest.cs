@@ -72,7 +72,7 @@ namespace KotNode.AutoCAD
                         mark.AddPart(poly,new RigidPlacement{Origin=new Vector3(-350,-60,0)});
 
                         var curved=new PartDefinition{Name="Накладка",Position="3",Material="С255",IncludeInSpec=true,Kind=PartKind.CurvedPlate,CurvedPlate=new CurvedPlateShape{InnerRadius=100,Thickness=10,Length=200,AngleRadians=Math.PI/3}};
-                        mark.AddPart(curved,new RigidPlacement{Origin=new Vector3(0,0,100)});
+                        var curvedInst=mark.AddPart(curved,new RigidPlacement{Origin=new Vector3(0,0,100)});
 
                         var beam=new PartDefinition{Name="Двутавр 30Б2",Position="",Material="С255",IncludeInSpec=false,Kind=PartKind.IBeam,IBeam=BeamCatalog.Create("30Б2",500)};
                         mark.AddPart(beam,new RigidPlacement{Origin=new Vector3(0,400,0)});
@@ -154,7 +154,7 @@ namespace KotNode.AutoCAD
                             .Select(id=>tr.GetObject(id,OpenMode.ForRead) as MLeader)
                             .Where(ml=>ml!=null&&ml.MText!=null).Select(ml=>ml.MText.Contents).ToList();
                         Assert(posLeaders.Any(t=>t.Contains("Поз. 99")),"In-place MLeader text updated dynamically to 'Поз. 99'",log);
-                        Assert(posLeaders.Any(t=>t.Contains("8")&&t.Contains("монт.")),"Weld MLeader formatted GOST leg k=8 (монт.)",log);
+                        Assert(posLeaders.Any(t=>t=="8"),"SPDS weld leader formatted numeric leg k=8",log);
 
                         // Stabilization: view-only MOVE and combined MOVE must preserve
                         // paper offsets. Also roundtrip native manual shell content.
@@ -206,6 +206,26 @@ namespace KotNode.AutoCAD
                         var newDims=annotationSpace.Cast<ObjectId>().Where(id=>!id.IsErased)
                             .Count(id=>tr.GetObject(id,OpenMode.ForRead) is Dimension);
                         Assert(newDims==4,"Family dimensions created immediately without extra update",log);
+
+                        // User-test regressions: native ticks must not reserve custom
+                        // arrowhead gaps; section welds follow the physical cover edge.
+                        Assert(managedDim.Dimtsz>0&&managedDim.Dimdle>0,
+                            "Native tick-based dimension line reaches and extends past extension lines",log);
+                        var physicalWeld=new ViewWeldOverlay{InstanceId=curvedInst.Id,SourceKey="spatial:CurvedPlate:inner-start",LegMm=8};
+                        topEntry.Data.Welds.Add(physicalWeld);
+                        AssemblyViews.Rebuild(scratch,tr,mark,refs,topEntry);
+                        AssemblyViews.Rebuild(scratch,tr,mark,refs,secEntry);
+                        var sectionGeometry=ViewShell.RequireUnchanged(tr,secEntry).BlockTableRecord;
+                        var sectionDefinition=(BlockTableRecord)tr.GetObject(sectionGeometry,OpenMode.ForRead);
+                        Assert(sectionDefinition.Cast<ObjectId>().Any(id=>tr.GetObject(id,OpenMode.ForRead) is Solid solid&&solid.Layer==AssemblyViews.WeldLayer),
+                            "Source longitudinal cover weld produces a native filled triangle in another section view",log);
+                        physicalWeld.LegMm=12;
+                        AssemblyViews.Rebuild(scratch,tr,mark,refs,topEntry);
+                        AssemblyViews.Rebuild(scratch,tr,mark,refs,secEntry);
+                        sectionDefinition=(BlockTableRecord)tr.GetObject(ViewShell.RequireUnchanged(tr,secEntry).BlockTableRecord,OpenMode.ForRead);
+                        Assert(sectionDefinition.Cast<ObjectId>().Select(id=>tr.GetObject(id,OpenMode.ForRead)).OfType<Solid>()
+                            .Any(s=>s.Layer==AssemblyViews.WeldLayer&&Math.Abs(s.GeometricExtents.MaxPoint.X-112)<1e-5),
+                            "Edited 12 mm leg updates the linked native section triangle",log);
 
                         // Stage 6 & 7: Native Tables (NASPEC, NAVRS, NAPROJVRS) + Update in-place
                         var msW=AssemblyDrawing.ModelSpace(scratch,tr,OpenMode.ForWrite);
