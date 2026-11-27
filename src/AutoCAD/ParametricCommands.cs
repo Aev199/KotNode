@@ -91,21 +91,28 @@ namespace KotNode.AutoCAD
             Diagnostics.Begin("NAPARAMS");
             var doc=AcApp.DocumentManager.MdiActiveDocument;
             if(doc==null)return;
+            var trace=Diagnostics.EnableLiveTrace("NAPARAMS");
+            if(trace!=null)doc.Editor.WriteMessage("\nОткрытие параметров. Журнал: "+trace);
             try
             {
+                Diagnostics.Step("Чтение сохранённой марки без обхода DWG");
                 AssemblyMark draft;
                 using(var tr=doc.Database.TransactionManager.StartTransaction())
                 {
                     var m=AssemblyDrawing.Load(doc.Database,tr);
                     if(m==null)throw new InvalidOperationException("Создайте марку командой NANEW.");
-                    AssemblyDrawing.Synchronize(doc.Database,tr,m);
+                    Diagnostics.Step("Копирование модели параметров");
                     draft=ModelJson.Copy(m);
                     tr.Commit();
                 }
+                Diagnostics.Step("Создание окна параметров");
                 using(var dlg=new ParametersDialog(draft))
                 {
-                    if(AcApp.ShowModalDialog(dlg)!=DialogResult.OK)return;
+                    Diagnostics.Step("Показ окна с владельцем AutoCAD без восстановления позиции");
+                    if(AcApp.ShowModalDialog(AcApp.MainWindow.Handle,dlg,false)!=DialogResult.OK)
+                    {Diagnostics.Step("Редактирование отменено");return;}
                 }
+                Diagnostics.Step("Применение параметров и синхронизация DWG");
                 SolveReport report;
                 using(var tr=doc.Database.TransactionManager.StartTransaction())
                 {
@@ -130,6 +137,7 @@ namespace KotNode.AutoCAD
                 var log=Diagnostics.Write(ex);
                 doc.Editor.WriteMessage("\nПараметры: "+ex.Message+"\nЖурнал: "+log);
             }
+            finally{Diagnostics.EndLiveTrace();}
         }
     }
 
@@ -144,11 +152,14 @@ namespace KotNode.AutoCAD
         {
             Dock=DockStyle.Fill,AllowUserToAddRows=false,AllowUserToDeleteRows=false,
             SelectionMode=DataGridViewSelectionMode.FullRowSelect,MultiSelect=false,
-            AutoSizeColumnsMode=DataGridViewAutoSizeColumnsMode.Fill,RowHeadersVisible=false,BackgroundColor=Color.White
+            AutoSizeColumnsMode=DataGridViewAutoSizeColumnsMode.None,AutoSizeRowsMode=DataGridViewAutoSizeRowsMode.None,
+            AllowUserToResizeRows=false,RowHeadersVisible=false,BackgroundColor=Color.White
         };
 
         public ParametersDialog(AssemblyMark mark)
         {
+            Diagnostics.Step("Параметры: создание формы и столбцов");
+            SuspendLayout();
             this.mark=mark;
             if(mark.Parameters==null)mark.Parameters=new List<MarkParameter>();
             if(mark.Bindings==null)mark.Bindings=new List<PartBinding>();
@@ -156,14 +167,14 @@ namespace KotNode.AutoCAD
             AutoScaleMode=AutoScaleMode.Dpi;
             Text="Параметры и формулы семейства — "+mark.Code;
             Font=new Font("Segoe UI",9f);
-            Width=920;Height=580;MinimumSize=new Size(760,460);StartPosition=FormStartPosition.CenterScreen;
+            Width=920;Height=580;MinimumSize=new Size(760,460);StartPosition=FormStartPosition.CenterParent;ShowInTaskbar=false;MinimizeBox=false;
 
             var tabs=new TabControl{Dock=DockStyle.Fill};
             tabs.TabPages.Add(BuildParamsTab());
             tabs.TabPages.Add(BuildBindingsTab());
             tabs.TabPages.Add(BuildRulesTab());
 
-            var footer=new FlowLayoutPanel{Dock=DockStyle.Bottom,AutoSize=true,FlowDirection=FlowDirection.RightToLeft,Padding=new Padding(6)};
+            var footer=new FlowLayoutPanel{Dock=DockStyle.Bottom,Height=44,AutoSize=false,WrapContents=false,FlowDirection=FlowDirection.RightToLeft,Padding=new Padding(6)};
             var ok=new Button{Text="Применить и перестроить",AutoSize=true,Height=28,FlatStyle=FlatStyle.System};
             var cancel=new Button{Text="Отмена",DialogResult=DialogResult.Cancel,AutoSize=true,Height=28,FlatStyle=FlatStyle.System};
             ok.Click+=(s,e)=>{
@@ -178,7 +189,28 @@ namespace KotNode.AutoCAD
             footer.Controls.Add(ok);footer.Controls.Add(cancel);
             Controls.Add(tabs);Controls.Add(footer);
             AcceptButton=ok;CancelButton=cancel;
-            LoadGrids();
+            SetWidths(paramsGrid,140,250,110,260,70);
+            SetWidths(bindingsGrid,260,230,340);
+            SetWidths(rulesGrid,170,220,200,200,80);
+            ResumeLayout(false);
+            Diagnostics.Step("Параметры: форма создана");
+        }
+        static void SetWidths(DataGridView grid,params int[] widths)
+        {
+            for(int i=0;i<grid.Columns.Count;i++)
+            {grid.Columns[i].AutoSizeMode=DataGridViewAutoSizeColumnMode.None;grid.Columns[i].Width=widths[i];grid.Columns[i].SortMode=DataGridViewColumnSortMode.NotSortable;}
+        }
+        protected override void OnLoad(EventArgs e)
+        {
+            Diagnostics.Step("Параметры: загрузка строк");
+            LoadGrids();base.OnLoad(e);
+            Diagnostics.Step("Параметры: строки загружены");
+        }
+        protected override void OnShown(EventArgs e)
+        {
+            Diagnostics.Step("Параметры: окно показано");
+            base.OnShown(e);
+            if(!IsDisposed&&Visible){BringToFront();Activate();}
         }
 
         void EditSafely(Action action)
@@ -196,11 +228,11 @@ namespace KotNode.AutoCAD
             add.Click+=(s,e)=>EditSafely(()=>{ReadParamsFromGrid();mark.Parameters.Add(new MarkParameter{Name="P"+(mark.Parameters.Count+1),Label="Параметр",Value=100});LoadGrids();});
             del.Click+=(s,e)=>EditSafely(()=>{if(paramsGrid.CurrentRow!=null){ReadParamsFromGrid();mark.Parameters.RemoveAt(paramsGrid.CurrentRow.Index);LoadGrids();}});
             bar.Controls.Add(add);bar.Controls.Add(del);
-            paramsGrid.Columns.Add("Name","Имя");paramsGrid.Columns[0].FillWeight=16;
-            paramsGrid.Columns.Add("Label","Описание");paramsGrid.Columns[1].FillWeight=34;
-            paramsGrid.Columns.Add("Value","Значение");paramsGrid.Columns[2].FillWeight=14;
-            paramsGrid.Columns.Add("Formula","Формула (необяз.)");paramsGrid.Columns[3].FillWeight=26;
-            paramsGrid.Columns.Add("Unit","Ед.");paramsGrid.Columns[4].FillWeight=10;
+            paramsGrid.Columns.Add("Name","Имя");
+            paramsGrid.Columns.Add("Label","Описание");
+            paramsGrid.Columns.Add("Value","Значение");
+            paramsGrid.Columns.Add("Formula","Формула (необяз.)");
+            paramsGrid.Columns.Add("Unit","Ед.");
             tab.Controls.Add(paramsGrid);tab.Controls.Add(bar);
             return tab;
         }
@@ -313,15 +345,21 @@ namespace KotNode.AutoCAD
 
         void LoadGrids()
         {
+            paramsGrid.SuspendLayout();bindingsGrid.SuspendLayout();rulesGrid.SuspendLayout();
+            try
+            {
+            Diagnostics.Step("Параметры: таблица параметров");
             paramsGrid.Rows.Clear();
             foreach(var p in mark.Parameters)
                 paramsGrid.Rows.Add(p.Name,p.Label,p.Value.ToString("0.###",CultureInfo.InvariantCulture),p.Formula??"",p.Unit??"мм");
+            Diagnostics.Step("Параметры: таблица привязок");
             bindingsGrid.Rows.Clear();
             foreach(var b in mark.Bindings)
             {
                 var part=mark.Parts.FirstOrDefault(p=>p.Id==b.PartId);
                 bindingsGrid.Rows.Add(part==null?"?":part.Name,b.Property,b.Formula);
             }
+            Diagnostics.Step("Параметры: таблица размещения");
             rulesGrid.Rows.Clear();
             foreach(var r in mark.PlacementRules)
             {
@@ -333,6 +371,8 @@ namespace KotNode.AutoCAD
                     (r.ExprRotXDeg??"0")+", "+(r.ExprRotYDeg??"0")+", "+(rz??"0"),
                     r.Kind==PlacementRuleKind.CircularArray||r.Kind==PlacementRuleKind.LinearArray?r.ExprCount:"—");
             }
+            }
+            finally{rulesGrid.ResumeLayout(false);bindingsGrid.ResumeLayout(false);paramsGrid.ResumeLayout(false);}
         }
 
         void ReadParamsFromGrid()

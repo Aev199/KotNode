@@ -55,6 +55,14 @@ static class TableMergeTests
             Check(log.Contains("NPPLACE")&&log.Contains("Спецификация"),"diagnostics retain command and drawing stage");
             Check(log.Contains("InvalidOperationException")&&log.Contains("NullReferenceException")&&log.Contains("inner"),"full exception and inner exception logged");
             Check(path==Diagnostics.LastLog,"NPLOG keeps latest error path");
+            Diagnostics.Begin("NAPARAMS");
+            var trace=Diagnostics.EnableLiveTrace("NAPARAMS",dir);
+            Diagnostics.Step("Перед показом окна");
+            Check(File.ReadAllText(trace).Contains("Перед показом окна"),"checkpoint persisted before command completion or exception");
+            Check(Diagnostics.LastLog==trace,"NPLOG exposes live startup trace");
+            Diagnostics.EndLiveTrace();
+            var finished=File.ReadAllText(trace);Diagnostics.Step("После завершения");
+            Check(finished.Contains("Команда завершена")&&File.ReadAllText(trace)==finished,"completed trace closes cleanly without later command contamination");
             var unavailable=Path.Combine(dir,"file");File.WriteAllText(unavailable,"not a directory");
             Check(Diagnostics.Write(error,unavailable).StartsWith("Журнал не записан"),"logging failure does not hide original failure");
         }
