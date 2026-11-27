@@ -27,21 +27,28 @@ namespace KotNode.AutoCAD
             Diagnostics.Begin(command);
             var doc=AcApp.DocumentManager.MdiActiveDocument;
             if(doc==null)return;
+            var trace=Diagnostics.EnableLiveTrace(command);
+            if(trace!=null)doc.Editor.WriteMessage("\nЖурнал "+command+": "+trace);
             try
             {
+                Diagnostics.Step("Проверка пространства модели и единиц");
                 if(!doc.Database.TileMode || doc.Database.Insunits!=UnitsValue.Millimeters)
                     throw new InvalidOperationException("Откройте пространство модели (TILEMODE=1), единицы DWG — миллиметры (INSUNITS=4).");
                 using(var tr=doc.Database.TransactionManager.StartTransaction())
                 {
                     if(new[]{"NAEDIT","NADETACH","NADELETE","NATREEDELETE","NAPIPE","NAPLATE","NAPOLYPLATE","NACURVED","NABEAM","NAREBAR","NACOPY","NAARRAY","NAEDITVIEW"}.Contains(command))
                     {
+                        Diagnostics.Step("Чтение марки перед командой");
                         var current=AssemblyDrawing.Load(doc.Database,tr);
                         if(current!=null)
                         {
+                            Diagnostics.Step("Синхронизация перед командой");
                             var refs=AssemblyDrawing.Synchronize(doc.Database,tr,current);
+                            Diagnostics.Step("Обновление старых привязок перед командой");
                             AssemblyViews.UpgradeReferences(doc.Database,tr,current,refs);
                         }
                     }
+                    Diagnostics.Step("Выполнение обработчика "+command);
                     action(doc,tr);
                     tr.Commit();
                 }
@@ -54,6 +61,7 @@ namespace KotNode.AutoCAD
                 var log=Diagnostics.Write(ex);
                 doc.Editor.WriteMessage("\nКонструктор: "+ex.Message+"\nЖурнал: "+log);
             }
+            finally{Diagnostics.EndLiveTrace();}
         }
         static AssemblyMark Need(Document doc,Transaction tr)
         {
@@ -77,13 +85,16 @@ namespace KotNode.AutoCAD
         }
         static Guid? Select(Document doc,System.Collections.Generic.Dictionary<Guid,BlockReference> refs)
         {
+            Diagnostics.Step("Ожидание выбора детали");
             var p=doc.Editor.GetEntity("\nВыберите деталь марки: ");
+            Diagnostics.Step("Выбор детали завершён: "+p.Status);
             if(p.Status!=PromptStatus.OK)return null;
             foreach(var pair in refs)if(pair.Value.ObjectId==p.ObjectId)return pair.Key;
             throw new InvalidOperationException("Выбран неуправляемый объект. Для копирования детали используйте NACOPY.");
         }
         static bool EditForm(PartDefinition part)
         {
+            Diagnostics.Step("Создание формы свойств детали");
             using(var f=new Fields("Свойства детали"))
             {
                 f.TextField("Наименование","name",part.Name);
@@ -149,7 +160,8 @@ namespace KotNode.AutoCAD
                     }
                     part.Validate();
                 };
-                return AcApp.ShowModalDialog(f)==DialogResult.OK;
+                Diagnostics.Step("Показ формы свойств детали");
+                return AcApp.ShowModalDialog(AcApp.MainWindow.Handle,f,false)==DialogResult.OK;
             }
         }
         static string NextPosition(AssemblyMark m)
@@ -1251,7 +1263,7 @@ namespace KotNode.AutoCAD
                 RefreshTree(doc);
         }
         static void Queue(string command)
-            =>AcApp.DocumentManager.MdiActiveDocument?.SendStringToExecute(command+"\n",true,false,false);
+            =>PaletteCommands.Queue(command);
         [CommandMethod("NAREFRESH",CommandFlags.Modal)]
         public void Refresh()=>Run("NAREFRESH",(doc,tr)=>{
             var m=AssemblyDrawing.Load(doc.Database,tr);if(m==null)return;
@@ -1327,7 +1339,7 @@ namespace KotNode.AutoCAD
             if(palette==null)
             {
                 constructorPanel=new ConstructorPanel();
-                palette=new PaletteSet("Узлы — конструктор",new Guid("e51c3c38-b277-4753-9b27-03ed12d5c50f")){Size=new Size(360,660),MinimumSize=new Size(320,460),Style=PaletteSetStyles.ShowCloseButton|PaletteSetStyles.ShowAutoHideButton};
+                palette=new PaletteSet("Узлы — конструктор",new Guid("e51c3c38-b277-4753-9b27-03ed12d5c50f")){Size=new Size(360,660),MinimumSize=new Size(320,460),KeepFocus=false,Style=PaletteSetStyles.ShowCloseButton|PaletteSetStyles.ShowAutoHideButton};
                 palette.Add("Конструктор",constructorPanel);
                 AcApp.DocumentManager.DocumentActivated+=(s,e)=>{
                     constructorPanel?.ClearTree("Нажмите «Обновить» для текущего DWG.");

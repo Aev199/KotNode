@@ -33,7 +33,7 @@ namespace KotNode.AutoCAD
   static void Need(){if(panel==null||panel.Project==null)throw new InvalidOperationException("Откройте проект командой NPROJECT.");}
   static void Latest(){Need();panel.ReloadForCommand();}
   [CommandMethod("NPROJECT",CommandFlags.Modal)]
-  public void Open(){Run(()=>{if(palette==null){panel=new ProjectPanel();palette=new PaletteSet("Узлы — проект",new Guid("f5c504a1-9a1a-45a4-ad25-c1f0d82ad803")){Size=new Size(640,720),MinimumSize=new Size(470,450),Style=PaletteSetStyles.ShowCloseButton|PaletteSetStyles.ShowAutoHideButton|PaletteSetStyles.ShowPropertiesMenu};palette.Add("Проект",panel);}palette.Visible=true;});}
+  public void Open(){Run(()=>{if(palette==null){panel=new ProjectPanel();palette=new PaletteSet("Узлы — проект",new Guid("f5c504a1-9a1a-45a4-ad25-c1f0d82ad803")){Size=new Size(640,720),MinimumSize=new Size(470,450),KeepFocus=false,Style=PaletteSetStyles.ShowCloseButton|PaletteSetStyles.ShowAutoHideButton|PaletteSetStyles.ShowPropertiesMenu};palette.Add("Проект",panel);}palette.Visible=true;});}
   [CommandMethod("NPPLACE",CommandFlags.Modal)]
   public void Place(){Run(()=>{
    Latest();var doc=AcApp.DocumentManager.MdiActiveDocument;var ed=doc.Editor;

@@ -101,7 +101,7 @@ namespace KotNode.AutoCAD
         }
         void Btn(Control parent,string text,Action click)
         {
-            var b=new Button{Text=text,AutoSize=true,Height=26,FlatStyle=FlatStyle.System};
+            var b=new PaletteButton{Text=text,AutoSize=true,Height=26,FlatStyle=FlatStyle.Standard};
             b.Click+=(s,e)=>Guard(click);
             parent.Controls.Add(b);
         }
@@ -293,7 +293,7 @@ namespace KotNode.AutoCAD
             status.Text="Проект загружен: "+Store.Path;
             RefreshParts();RefreshVrs();
         }
-        static void Queue(string cmd)=>AcApp.DocumentManager.MdiActiveDocument?.SendStringToExecute(cmd+"\n",true,false,false);
+        static void Queue(string cmd)=>PaletteCommands.Queue(cmd);
     }
 
     public sealed class AssemblyProjectCommands
@@ -307,7 +307,7 @@ namespace KotNode.AutoCAD
             if(palette==null)
             {
                 panel=new AssemblyProjectPanel();
-                palette=new PaletteSet("KotNode — Проект (Schema 2)",new Guid("c4e12f9b-83a1-4b22-9f4e-77c3b20f1e02")){Size=new Size(560,600),MinimumSize=new Size(480,460)};
+                palette=new PaletteSet("KotNode — Проект (Schema 2)",new Guid("c4e12f9b-83a1-4b22-9f4e-77c3b20f1e02")){Size=new Size(560,600),MinimumSize=new Size(480,460),KeepFocus=false};
                 palette.Add("Проект 2.0",panel);
             }
             palette.Visible=true;

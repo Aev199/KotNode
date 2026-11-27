@@ -19,11 +19,11 @@ namespace KotNode.AutoCAD
 
         readonly Label markTitle;
         readonly Label statusLabel;
-        readonly Button newMarkBannerButton;
+        readonly PaletteButton newMarkBannerButton;
         readonly TreeView tree;
-        readonly Button selectButton;
-        readonly Button deleteButton;
-        readonly Button quickActionButton;
+        readonly PaletteButton selectButton;
+        readonly PaletteButton deleteButton;
+        readonly PaletteButton quickActionButton;
         readonly ToolTip tips=new ToolTip{AutoPopDelay=6000,InitialDelay=350,ReshowDelay=150,ShowAlways=true};
         readonly ContextMenuStrip moreMenu=new ContextMenuStrip();
         readonly ContextMenuStrip treeMenu=new ContextMenuStrip();
@@ -64,7 +64,7 @@ namespace KotNode.AutoCAD
             newMarkBannerButton=ActionButton("+ Марка","NANEW","Создать новую марку в текущем DWG (NANEW)",26);
             var refreshBtn=ActionButton("Обновить","NAREFRESH","Обновить дерево состава и синхронизировать удаления (NAREFRESH)",26);
             var infoBtn=ActionButton("Инфо","NAINFO","Вывести состав и массу марки в командную строку (NAINFO)",26);
-            var moreBtn=new Button{Text="Ещё ▾",AutoSize=true,Height=26,Margin=new Padding(2,0,0,0),FlatStyle=FlatStyle.System};
+            var moreBtn=new PaletteButton{Text="Ещё ▾",AutoSize=true,Height=26,Margin=new Padding(2,0,0,0),FlatStyle=FlatStyle.Standard};
             tips.SetToolTip(moreBtn,"Редкие и служебные команды марки");
 
             moreMenu.Items.Add("Новая марка (NANEW)",null,(s,e)=>Queue("NANEW"));
@@ -134,15 +134,15 @@ namespace KotNode.AutoCAD
             selBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,34));
             selBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,32));
 
-            selectButton=new Button{Text="Выбрать",Dock=DockStyle.Fill,Height=26,Margin=new Padding(0,0,3,0),Enabled=false,FlatStyle=FlatStyle.System};
+            selectButton=new PaletteButton{Text="Выбрать",Dock=DockStyle.Fill,Height=26,Margin=new Padding(0,0,3,0),Enabled=false,FlatStyle=FlatStyle.Standard};
             selectButton.Click+=(s,e)=>PickSelected();
             tips.SetToolTip(selectButton,"Выделить выбранный объект на чертеже (NASELECT)");
 
-            quickActionButton=new Button{Text="Линии вида",Dock=DockStyle.Fill,Height=26,Margin=new Padding(2,0,2,0),Enabled=false,FlatStyle=FlatStyle.System};
+            quickActionButton=new PaletteButton{Text="Линии вида",Dock=DockStyle.Fill,Height=26,Margin=new Padding(2,0,2,0),Enabled=false,FlatStyle=FlatStyle.Standard};
             quickActionButton.Click+=(s,e)=>RunQuickAction();
             tips.SetToolTip(quickActionButton,"Быстрое действие для выбранного элемента дерева");
 
-            deleteButton=new Button{Text="Удалить",Dock=DockStyle.Fill,Height=26,Margin=new Padding(3,0,0,0),Enabled=false,FlatStyle=FlatStyle.System};
+            deleteButton=new PaletteButton{Text="Удалить",Dock=DockStyle.Fill,Height=26,Margin=new Padding(3,0,0,0),Enabled=false,FlatStyle=FlatStyle.Standard};
             deleteButton.Click+=(s,e)=>DeleteSelected();
             tips.SetToolTip(deleteButton,"Удалить выбранную позицию, экземпляр или вид (NATREEDELETE)");
 
@@ -252,17 +252,17 @@ namespace KotNode.AutoCAD
             return g;
         }
 
-        Button ActionButton(string text,string command,string tooltip,int height)
+        PaletteButton ActionButton(string text,string command,string tooltip,int height)
         {
-            var b=new Button{Text=text,AutoSize=true,Height=height,Margin=new Padding(2,0,0,0),FlatStyle=FlatStyle.System};
+            var b=new PaletteButton{Text=text,AutoSize=true,Height=height,Margin=new Padding(2,0,0,0),FlatStyle=FlatStyle.Standard};
             b.Click+=(s,e)=>Queue(command);
             tips.SetToolTip(b,tooltip);
             return b;
         }
 
-        Button GridButton(string text,string command,string tooltip)
+        PaletteButton GridButton(string text,string command,string tooltip)
         {
-            var b=new Button{Text=text,Dock=DockStyle.Fill,Margin=new Padding(2),FlatStyle=FlatStyle.System};
+            var b=new PaletteButton{Text=text,Dock=DockStyle.Fill,Margin=new Padding(2),FlatStyle=FlatStyle.Standard};
             b.Click+=(s,e)=>Queue(command);
             tips.SetToolTip(b,tooltip);
             return b;
@@ -372,7 +372,7 @@ namespace KotNode.AutoCAD
         }
 
         static void Queue(string command)
-            =>AcApp.DocumentManager.MdiActiveDocument?.SendStringToExecute(command+"\n",true,false,false);
+            =>PaletteCommands.Queue(command);
 
         internal void ClearTree(string status)
         {

@@ -17,6 +17,13 @@ jobs:
       - name: Build managed AutoCAD 2021 plugin and run core tests
         shell: pwsh
         run: ./build.ps1
+      - name: Smoke test palette buttons and popup on Windows
+        shell: pwsh
+        run: |
+          dotnet build tests/ui/KotNode.PaletteSmoke.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./tests/ui/bin/Release/net48/KotNode.PaletteSmoke.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify plugin package
         shell: pwsh
         run: |

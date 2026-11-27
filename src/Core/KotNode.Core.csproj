@@ -1,4 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
- <PropertyGroup><Version>0.2.5</Version><TargetFrameworks>net48;net8.0</TargetFrameworks><LangVersion>latest</LangVersion><Nullable>disable</Nullable></PropertyGroup>
+ <PropertyGroup><Version>0.2.6</Version><TargetFrameworks>net48;net8.0</TargetFrameworks><LangVersion>latest</LangVersion><Nullable>disable</Nullable></PropertyGroup>
  <ItemGroup Condition="'$(TargetFramework)' == 'net48'"><PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all"/><Reference Include="System.Runtime.Serialization"/></ItemGroup>
 </Project>

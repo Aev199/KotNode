@@ -41,7 +41,7 @@ namespace KotNode.AutoCAD
         void Tab(TabControl tabs,string name,DataGridView grid,Action<FlowLayoutPanel> buttons)
         {var tab=new TabPage(name);var panel=new TableLayoutPanel{Dock=DockStyle.Fill,RowCount=2,ColumnCount=1};panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));panel.RowStyles.Add(new RowStyle(SizeType.Percent,100));var bar=new FlowLayoutPanel{AutoSize=true,Dock=DockStyle.Fill};buttons(bar);panel.Controls.Add(bar,0,0);panel.Controls.Add(grid,0,1);tab.Controls.Add(panel);tabs.TabPages.Add(tab);}
         void Button(Control parent,string text,Action click)
-        {var b=new Button{Text=text,AutoSize=true};b.Click+=(s,e)=>Guard(click);parent.Controls.Add(b);}
+        {var b=new PaletteButton{Text=text,AutoSize=true};b.Click+=(s,e)=>Guard(click);parent.Controls.Add(b);}
         internal void Guard(Action action)
         {try{action();}catch(Exception e){MessageBox.Show(e.Message,"Узлы",MessageBoxButtons.OK,MessageBoxIcon.Warning);}}
         void Need(){if(Project==null)throw new InvalidOperationException("Сначала откройте проект.");}
@@ -118,7 +118,7 @@ namespace KotNode.AutoCAD
             uses.DataSource=Project.Uses.Select(u=>new{Марка=Project.Marks.Single(m=>m.Id==u.MarkId).Code,Участок=u.Location,Количество=u.Count,В_ведомости=u.Included}).ToList();
             scope.Items.Clear();scope.Items.Add("Весь проект");foreach(var s in Project.Uses.Select(u=>u.Location).Distinct())scope.Items.Add(s);scope.SelectedIndex=0;status.Text="Проект загружен / сохранен";RefreshSteel();RefreshParts();
         }
-        static void Queue(string command){var doc=AcApp.DocumentManager.MdiActiveDocument;if(doc==null)throw new InvalidOperationException("Откройте DWG.");doc.SendStringToExecute(command+"\n",true,false,false);}
+        static void Queue(string command){var doc=AcApp.DocumentManager.MdiActiveDocument;if(doc==null)throw new InvalidOperationException("Откройте DWG.");PaletteCommands.Queue(command);}
         internal void SetStatus(string value){status.Text=value;}
     }
     sealed class Fields : Form
