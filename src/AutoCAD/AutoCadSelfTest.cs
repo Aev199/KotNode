@@ -324,6 +324,60 @@ namespace KotNode.AutoCAD
                     }
                 });
 
+                // DWG-local nodes: same family IDs must never merge native geometry.
+                using(var nodesDb=new Database(true,true))
+                WithDatabase(nodesDb,_=>{
+                    using(var tr=nodesDb.TransactionManager.StartTransaction())
+                    {
+                        var baseFamilies=NodeFamilyLibrary.BuiltIn();
+                        var templates=new[]{
+                            NodeFamilyLibrary.Instantiate(baseFamilies[0],"DWG-01","Первый"),
+                            NodeFamilyLibrary.Instantiate(baseFamilies[0],"DWG-02","Второй"),
+                            NodeFamilyLibrary.Instantiate(baseFamilies[1],"DWG-03","Другой тип")};
+                        var root=(DBDictionary)tr.GetObject(nodesDb.NamedObjectsDictionaryId,OpenMode.ForRead);
+                        AssemblyDrawing.Write(root,"KOTNODE_ASSEMBLY_1",templates[0].Mark,tr);
+                        Assert(AssemblyDrawing.LoadNodes(nodesDb,tr).Nodes.Count==1&&!root.Contains("KOTNODE_DRAWING_NODES_1"),
+                            "Legacy single-node DWG is read without destructive migration",log);
+                        for(int index=0;index<templates.Length;index++)
+                        {
+                            var template=templates[index];
+                            if(index>0)NodePlacement.PlaceFamily(template,new Vector3(10000*index,0,0));
+                            var mark=template.Mark;var refs=new Dictionary<Guid,BlockReference>();
+                            foreach(var part in mark.Parts)
+                            {
+                                var geometry=AssemblyDrawing.Geometry(nodesDb,tr,part);
+                                foreach(var inst in mark.Instances.Where(i=>i.PartId==part.Id))refs[inst.Id]=AssemblyDrawing.Insert(nodesDb,tr,mark,inst,geometry);
+                            }
+                            AssemblyDrawing.Synchronize(nodesDb,tr,mark);
+                            var view=template.Views[0];
+                            AssemblyViews.Create(nodesDb,tr,mark,refs,new AssemblyViews.ViewData{Name=view.Name,Frame=view.Frame,ParametricPrototype=true,Hidden=true,AnnotationScale=20},new Point3d(view.OffsetX,view.OffsetY,0));
+                            AssemblyDrawing.Save(nodesDb,tr,mark);
+                        }
+                        var nodes=AssemblyDrawing.LoadNodes(nodesDb,tr);
+                        Assert(nodes.Nodes.Count==3&&nodes.ActiveId==templates[2].Mark.Id,"Three independent nodes survive registry migration",log);
+                        var a=nodes.Nodes.Single(m=>m.Id==templates[0].Mark.Id);var b=nodes.Nodes.Single(m=>m.Id==templates[1].Mark.Id);
+                        Assert(a.Instances[0].Id==b.Instances[0].Id,"Repeated family retains matching internal instance IDs for isolation test",log);
+                        var refsA=AssemblyDrawing.Synchronize(nodesDb,tr,a);var refsB=AssemblyDrawing.Synchronize(nodesDb,tr,b);
+                        Assert(refsA.Count==a.Instances.Count&&refsB.Count==b.Instances.Count,"Synchronization ignores other nodes instead of deleting or merging instances",log);
+                        Assert(!NodeCommands.Owned(nodesDb,tr,a).Intersect(NodeCommands.Owned(nodesDb,tr,b)).Any(),"Owned model and view entity sets are disjoint",log);
+                        string savedB=KotNode.Core.Json.Write(b);var blocksB=refsB.ToDictionary(p=>p.Key,p=>p.Value.BlockTableRecord);
+                        a.Parameters.First(p=>p.Name=="D").Value=900;
+                        ParametricCommands.ApplySolvedMark(nodesDb,tr,a,refsA,ParametricEngine.Solve(a));
+                        var bAfter=AssemblyDrawing.LoadNodes(nodesDb,tr).Nodes.Single(m=>m.Id==b.Id);
+                        Assert(KotNode.Core.Json.Write(bAfter)==savedB&&refsB.All(p=>p.Value.BlockTableRecord==blocksB[p.Key]),
+                            "Re-solving first node leaves second node data and native definitions unchanged",log);
+                        var moved=KotNode.Core.Json.Copy(bAfter);NodePlacement.TranslateMark(moved,new Vector3(2000,3000,0));ParametricEngine.Solve(moved);
+                        Assert(Math.Abs(moved.Instances[0].Placement.Origin.X-bAfter.Instances[0].Placement.Origin.X-2000)<1e-6,
+                            "Placed node formula solve preserves its independent drawing offset",log);
+                        var old=AssemblyDrawing.Read<AssemblyMark>(root,"KOTNODE_ASSEMBLY_1",tr);bool rejects=false;
+                        try{old.Validate();}catch(System.IO.InvalidDataException){rejects=true;}
+                        Assert(rejects,"Compatibility record prevents old readers from overwriting a multi-node DWG",log);
+                        nodes=AssemblyDrawing.LoadNodes(nodesDb,tr);nodes.Activate(a.Id);AssemblyDrawing.SaveNodes(nodesDb,tr,nodes);
+                        Assert(AssemblyDrawing.Load(nodesDb,tr).Id==a.Id,"Active node selection persists separately from edits to other nodes",log);
+                        tr.Commit();
+                    }
+                });
+
                 // --- TEST 2: All 4 Built-In Families + Live 3D Angled Pipe-to-Waler Re-Solve + SaveAs DWG ---
                 var families=NodeFamilyLibrary.BuiltIn();
                 for(int fi=0;fi<3;fi++)

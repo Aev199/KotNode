@@ -12,6 +12,7 @@ namespace KotNode.Core
         public Guid Id { get; set; } = Guid.NewGuid();
         public string Code { get; set; } = "У-01";
         public string Name { get; set; } = "Произвольный узел";
+        public Vector3 LayoutOrigin { get; set; }
         public List<PartDefinition> Parts { get; set; } = new List<PartDefinition>();
         public List<PartInstance> Instances { get; set; } = new List<PartInstance>();
         public List<WeldDefinition> WeldDefinitions { get; set; }=new List<WeldDefinition>();
@@ -22,8 +23,9 @@ namespace KotNode.Core
 
         public void Validate()
         {
-            Guard.Require((Schema == 1 || Schema == 2 || Schema == 3) && Id != Guid.Empty && Guard.Text(Code) && Guard.Text(Name), "Неверная марка или версия модели.");
+            Guard.Require((Schema == 1 || Schema == 2 || Schema == 3 || Schema == 4) && Id != Guid.Empty && Guard.Text(Code) && Guard.Text(Name), "Неверная марка или версия модели.");
             Guard.Require(Parts != null && Instances != null, "Отсутствует состав марки.");
+            Guard.Require(LayoutOrigin==null||(Schema>=4&&LayoutOrigin.IsFinite()&&Math.Abs(LayoutOrigin.Z)<1e-8),"Размещение узла требует версии модели 4 и мировой XY.");
             Guard.Require(Schema>=2||WeldDefinitions==null||WeldDefinitions.Count==0,"Определения швов требуют версии модели 2.");
             var weldIds=new HashSet<Guid>();
             foreach(var definition in WeldDefinitions??new List<WeldDefinition>())

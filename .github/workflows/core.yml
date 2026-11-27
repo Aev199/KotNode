@@ -14,6 +14,8 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
+      - name: Check UI command button coverage
+        run: python scripts/check_tool_catalog.py
       - name: Build managed AutoCAD 2021 plugin and run core tests
         shell: pwsh
         run: ./build.ps1

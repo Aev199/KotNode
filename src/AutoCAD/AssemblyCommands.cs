@@ -22,6 +22,8 @@ namespace KotNode.AutoCAD
         static PaletteSet palette;
         static ConstructorPanel constructorPanel;
         static Document watchedDocument;
+        static Document refreshDocument;
+        static bool refreshQueued;
         static void Run(string command,Action<Document,Transaction> action)
         {
             Diagnostics.Begin(command);
@@ -1247,6 +1249,19 @@ namespace KotNode.AutoCAD
             if(constructorPanel==null||doc==null)return;
             constructorPanel.RefreshTree(doc);
         }
+        static void ScheduleRefresh(Document doc)
+        {
+            refreshDocument=doc;
+            if(refreshQueued)return;
+            refreshQueued=true;AcApp.Idle+=RefreshWhenIdle;
+        }
+        static void RefreshWhenIdle(object sender,EventArgs e)
+        {
+            var doc=refreshDocument;
+            if(doc!=null&&doc==AcApp.DocumentManager.MdiActiveDocument&&!doc.Editor.IsQuiescent)return;
+            AcApp.Idle-=RefreshWhenIdle;refreshQueued=false;refreshDocument=null;
+            if(doc!=null&&doc==AcApp.DocumentManager.MdiActiveDocument)RefreshTree(doc);
+        }
         static void Watch(Document doc)
         {
             if(watchedDocument==doc)return;
@@ -1339,11 +1354,11 @@ namespace KotNode.AutoCAD
             if(palette==null)
             {
                 constructorPanel=new ConstructorPanel();
-                palette=new PaletteSet("Узлы — конструктор",new Guid("e51c3c38-b277-4753-9b27-03ed12d5c50f")){Size=new Size(360,660),MinimumSize=new Size(320,460),KeepFocus=false,Style=PaletteSetStyles.ShowCloseButton|PaletteSetStyles.ShowAutoHideButton};
+                palette=new PaletteSet("Узлы — конструктор",new Guid("e51c3c38-b277-4753-9b27-03ed12d5c50f")){Size=new Size(440,760),MinimumSize=new Size(360,620),KeepFocus=false,Style=PaletteSetStyles.ShowCloseButton|PaletteSetStyles.ShowAutoHideButton};
                 palette.Add("Конструктор",constructorPanel);
                 AcApp.DocumentManager.DocumentActivated+=(s,e)=>{
                     constructorPanel?.ClearTree("Нажмите «Обновить» для текущего DWG.");
-                    Watch(e.Document);
+                    Watch(e.Document);ScheduleRefresh(e.Document);
                 };
             }
             var doc=AcApp.DocumentManager.MdiActiveDocument;Watch(doc);if(doc!=null)RefreshTree(doc);
@@ -1351,7 +1366,6 @@ namespace KotNode.AutoCAD
         }
         [CommandMethod("NANEW",CommandFlags.Modal)]
         public void NewMark()=>Run("NANEW",(doc,tr)=>{
-            if(AssemblyDrawing.Load(doc.Database,tr)!=null)throw new InvalidOperationException("В этом DWG уже есть марка. Создайте новый DWG.");
             var code=Text(doc.Editor,"Шифр марки: ");if(code==null)return;
             var name=Text(doc.Editor,"Название марки: ");if(name==null)return;
             AssemblyDrawing.Save(doc.Database,tr,new AssemblyMark { Code=code,Name=name });

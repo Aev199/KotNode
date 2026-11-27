@@ -396,6 +396,10 @@ namespace KotNode.Core
         {
             Guard.Require(mark!=null,"Марка не задана.");
             var draft=Json.Copy(mark);
+            // Formula coordinates belong to the family, not its location on a sheet.
+            var origin=draft.LayoutOrigin??new Vector3();
+            foreach(var inst in draft.Instances)
+                inst.Placement.Origin=new Vector3(inst.Placement.Origin.X-origin.X,inst.Placement.Origin.Y-origin.Y,inst.Placement.Origin.Z);
             var report=new SolveReport();
             report.Values=EvaluateParameters(draft.Parameters);
 
@@ -536,6 +540,7 @@ namespace KotNode.Core
                 }
             }
 
+            foreach(var inst in draft.Instances)inst.Placement.Origin=NodePlacement.Add(inst.Placement.Origin,origin);
             if(draft.Parts.Any(MemberEndCuts.HasCuts))draft.Schema=Math.Max(draft.Schema,3);
             draft.Validate();
             // Commit validated draft back into mark

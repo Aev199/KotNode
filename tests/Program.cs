@@ -56,6 +56,7 @@ class Program
   StabilizationTests.Run();
   WeldEditingTests.Run();
   MemberEndCutTests.Run();
+  DrawingNodesTests.Run();
   WeldLinkingTests.Run();
   ParametricProjectionTests.Run();
   SectionHatchBoundaryTests.Run();

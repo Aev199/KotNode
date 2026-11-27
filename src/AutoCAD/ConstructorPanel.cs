@@ -28,11 +28,21 @@ namespace KotNode.AutoCAD
         readonly ContextMenuStrip moreMenu=new ContextMenuStrip();
         readonly ContextMenuStrip treeMenu=new ContextMenuStrip();
         Document treeDocument;
+        Guid treeMarkId;
+        readonly ComboBox nodePicker=new ComboBox{Dock=DockStyle.Fill,DropDownStyle=ComboBoxStyle.DropDownList};
+        bool loadingNodes;
+        readonly Font sectionFont;
+        sealed class NodeChoice
+        {
+            internal Guid Id;internal string Label;
+            public override string ToString()=>Label;
+        }
 
         public ConstructorPanel()
         {
             AutoScaleMode=AutoScaleMode.Dpi;
             Font=new Font("Segoe UI",9f,FontStyle.Regular,GraphicsUnit.Point);
+            sectionFont=new Font(Font,FontStyle.Bold);
             Dock=DockStyle.Fill;
             BackColor=SystemColors.Control;
             Padding=new Padding(6);
@@ -46,22 +56,30 @@ namespace KotNode.AutoCAD
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));     // 5: Status footer
 
             // --- 0. Header bar ---
-            var headerPanel=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,AutoSize=true,Margin=new Padding(0,0,0,6)};
+            var headerPanel=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=1,RowCount=3,AutoSize=true,Margin=new Padding(0,0,0,6)};
             headerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
-            headerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            headerPanel.RowStyles.Add(new RowStyle(SizeType.Absolute,30));
+            headerPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            headerPanel.RowStyles.Add(new RowStyle(SizeType.Absolute,26));
+            tips.SetToolTip(nodePicker,"Активный узел: команды редактируют только его. Для выбора по графике — вкладка «Узлы».");
+            nodePicker.SelectedIndexChanged+=(s,e)=>{
+                if(!loadingNodes&&treeDocument==AcApp.DocumentManager.MdiActiveDocument&&nodePicker.SelectedItem is NodeChoice choice&&choice.Id!=treeMarkId)
+                    Queue("NAACTIVATE "+choice.Id.ToString("D"));
+            };
+            headerPanel.Controls.Add(nodePicker,0,0);
 
             markTitle=new Label
             {
                 Text="Марка не создана",
                 Font=new Font("Segoe UI",9.5f,FontStyle.Bold,GraphicsUnit.Point),
-                AutoSize=true,
+                AutoSize=false,AutoEllipsis=true,Dock=DockStyle.Fill,
                 Anchor=AnchorStyles.Left,
                 Margin=new Padding(0,5,6,0)
             };
-            headerPanel.Controls.Add(markTitle,0,0);
+            headerPanel.Controls.Add(markTitle,0,2);
 
-            var topButtons=new FlowLayoutPanel{AutoSize=true,WrapContents=false,FlowDirection=FlowDirection.LeftToRight,Margin=new Padding(0)};
-            newMarkBannerButton=ActionButton("+ Марка","NANEW","Создать новую марку в текущем DWG (NANEW)",26);
+            var topButtons=new FlowLayoutPanel{AutoSize=true,WrapContents=true,FlowDirection=FlowDirection.LeftToRight,Margin=new Padding(0)};
+            newMarkBannerButton=ActionButton("+ Узел","NANEW","Создать новый независимый узел в текущем DWG (NANEW)",26);
             var refreshBtn=ActionButton("Обновить","NAREFRESH","Обновить дерево состава и синхронизировать удаления (NAREFRESH)",26);
             var infoBtn=ActionButton("Инфо","NAINFO","Вывести состав и массу марки в командную строку (NAINFO)",26);
             var moreBtn=new PaletteButton{Text="Ещё ▾",AutoSize=true,Height=26,Margin=new Padding(2,0,0,0),FlatStyle=FlatStyle.Standard};
@@ -84,15 +102,17 @@ namespace KotNode.AutoCAD
             topButtons.Controls.Add(refreshBtn);
             topButtons.Controls.Add(infoBtn);
             topButtons.Controls.Add(moreBtn);
-            headerPanel.Controls.Add(topButtons,1,0);
+            headerPanel.Controls.Add(topButtons,0,1);
             root.Controls.Add(headerPanel,0,0);
 
             // --- 1. Tabbed actions (clean functional tabs instead of flat button wall) ---
-            var tabs=new TabControl{Dock=DockStyle.Fill,Height=152,Margin=new Padding(0,0,0,6)};
+            var tabs=new TabControl{Dock=DockStyle.Fill,Height=220,Multiline=true,Margin=new Padding(0,0,0,6)};
+            tabs.TabPages.Add(BuildNodesTab());
             tabs.TabPages.Add(BuildPartsTab());
             tabs.TabPages.Add(BuildEditTab());
             tabs.TabPages.Add(BuildViewsTab());
             tabs.TabPages.Add(BuildDraftingTab());
+            tabs.TabPages.Add(BuildToolsTab());
             root.Controls.Add(tabs,0,1);
 
             // --- 2. Tree caption ---
@@ -164,6 +184,81 @@ namespace KotNode.AutoCAD
             root.Controls.Add(statusLabel,0,5);
 
             Controls.Add(root);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if(disposing){tips.Dispose();moreMenu.Dispose();treeMenu.Dispose();sectionFont?.Dispose();}
+            base.Dispose(disposing);
+        }
+
+        TabPage BuildNodesTab()
+        {
+            var page=new TabPage("Узлы"){Padding=new Padding(4)};
+            var grid=MakeGrid(3,3);
+            AddGridButton(grid,0,0,"Из семейства","NAFAMILY","Вставить новый независимый узел в указанную точку");
+            AddGridButton(grid,1,0,"Пустой узел","NANEW","Создать узел с собственным составом");
+            AddGridButton(grid,2,0,"Выбрать на DWG","NAACTIVEPICK","Активировать узел по его детали, виду или оформлению");
+            AddGridButton(grid,0,1,"Выделить узел","NANODESELECT","Выделить детали, виды, оформление и таблицы активного узла");
+            AddGridButton(grid,1,1,"Переместить","NAMOVENODE","Переместить весь активный узел с сохранением размещения после пересчёта");
+            AddGridButton(grid,2,1,"Шифр / название","NANODERENAME","Изменить шифр и название активного узла");
+            AddGridButton(grid,0,2,"В семейство","NAFAMILYSAVE","Сохранить активный узел с оформлением");
+            AddGridButton(grid,1,2,"Обновить все","NAUPDATEALLNODES","Пересчитать все узлы в текущем DWG");
+            AddGridButton(grid,2,2,"Удалить узел","NANODEDELETE","Удалить активный узел целиком после подтверждения");
+            page.Controls.Add(grid);return page;
+        }
+        TabPage BuildToolsTab()
+        {
+            var page=new TabPage("Инструменты"){Padding=new Padding(4)};
+            var search=new TextBox{Dock=DockStyle.Top,AccessibleName="Поиск инструментов"};
+            tips.SetToolTip(search,"Поиск по названию, категории или команде");
+            var scroll=new Panel{Dock=DockStyle.Fill,AutoScroll=true};
+            var list=new TableLayoutPanel{Dock=DockStyle.Top,AutoSize=true,ColumnCount=1};
+            list.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));scroll.Controls.Add(list);
+            Action populate=()=>{
+                list.SuspendLayout();
+                foreach(Control c in list.Controls.Cast<Control>().ToArray())c.Dispose();list.Controls.Clear();list.RowStyles.Clear();list.RowCount=0;
+                string query=search.Text.Trim();
+                foreach(var group in ToolCatalog.All.Where(t=>(t.Title+" "+t.Command+" "+t.Group).IndexOf(query,StringComparison.CurrentCultureIgnoreCase)>=0).GroupBy(t=>t.Group))
+                {
+                    int row=list.RowCount++;list.RowStyles.Add(new RowStyle(SizeType.Absolute,26));
+                    list.Controls.Add(new Label{Text=group.Key,AutoSize=true,Font=sectionFont,Anchor=AnchorStyles.Left},0,row);
+                    foreach(var tool in group)
+                    {
+                        var button=GridButton(tool.Title+" ("+tool.Command+")",tool.Command,tool.Title+"\n"+tool.Command+(tool.RequiresNode?"\nДля активного узла":""));
+                        button.AutoEllipsis=true;button.TextAlign=ContentAlignment.MiddleLeft;
+                        button.Enabled=!tool.RequiresNode||treeMarkId!=Guid.Empty;
+                        row=list.RowCount++;list.RowStyles.Add(new RowStyle(SizeType.Absolute,36));list.Controls.Add(button,0,row);
+                    }
+                }
+                list.ResumeLayout(true);
+            };
+            search.TextChanged+=(s,e)=>populate();populate();
+            page.Controls.Add(scroll);page.Controls.Add(search);return page;
+        }
+        void LoadNodeChoices(DrawingNodes nodes)
+        {
+            loadingNodes=true;
+            try
+            {
+                nodePicker.Items.Clear();
+                foreach(var n in nodes.Nodes)
+                {
+                    var item=new NodeChoice{Id=n.Id,Label=n.Code+" — "+n.Name};nodePicker.Items.Add(item);
+                    if(n.Id==nodes.ActiveId)nodePicker.SelectedItem=item;
+                }
+                nodePicker.Enabled=nodes.Nodes.Count>0;
+            }
+            finally{loadingNodes=false;}
+        }
+        void SetNodeAvailability(Control parent,bool hasNode)
+        {
+            foreach(Control c in parent.Controls)
+            {
+                if(c.Tag is string command)
+                {var tool=ToolCatalog.All.FirstOrDefault(t=>t.Command==command);if(tool!=null&&tool.RequiresNode)c.Enabled=hasNode;}
+                SetNodeAvailability(c,hasNode);
+            }
         }
 
         TabPage BuildPartsTab()
@@ -255,6 +350,7 @@ namespace KotNode.AutoCAD
         PaletteButton ActionButton(string text,string command,string tooltip,int height)
         {
             var b=new PaletteButton{Text=text,AutoSize=true,Height=height,Margin=new Padding(2,0,0,0),FlatStyle=FlatStyle.Standard};
+            b.Tag=command;
             b.Click+=(s,e)=>Queue(command);
             tips.SetToolTip(b,tooltip);
             return b;
@@ -263,6 +359,7 @@ namespace KotNode.AutoCAD
         PaletteButton GridButton(string text,string command,string tooltip)
         {
             var b=new PaletteButton{Text=text,Dock=DockStyle.Fill,Margin=new Padding(2),FlatStyle=FlatStyle.Standard};
+            b.Tag=command;
             b.Click+=(s,e)=>Queue(command);
             tips.SetToolTip(b,tooltip);
             return b;
@@ -373,14 +470,18 @@ namespace KotNode.AutoCAD
         }
 
         static void Queue(string command)
-            =>PaletteCommands.Queue(command);
+        {
+            if((command=="NAE2ETEST"||command=="NAE2ERELOAD")&&MessageBox.Show("Диагностическая команда создаёт тестовую геометрию или открывает тестовый DWG. Продолжить?","Диагностика",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
+            PaletteCommands.Queue(command);
+        }
 
         internal void ClearTree(string status)
         {
             tree.Nodes.Clear();
-            treeDocument=null;
+            treeDocument=null;treeMarkId=Guid.Empty;
+            LoadNodeChoices(new DrawingNodes());SetNodeAvailability(this,false);
             markTitle.Text="Документ не синхронизирован";
-            newMarkBannerButton.Visible=false;
+            newMarkBannerButton.Visible=true;
             statusLabel.Text=status;
             statusLabel.ForeColor=SystemColors.ControlDarkDark;
             UpdateSelectionControls();
@@ -391,25 +492,29 @@ namespace KotNode.AutoCAD
             try
             {
                 tree.BeginUpdate();
+                var previousMark=treeMarkId;
                 var prevTag=treeDocument==doc?tree.SelectedNode?.Tag as NodeTag:null;
                 string previous=prevTag?.Key;
                 tree.Nodes.Clear();
                 treeDocument=doc;
                 using(var tr=doc.Database.TransactionManager.StartTransaction())
                 {
-                    var m=AssemblyDrawing.Load(doc.Database,tr);
+                    var nodes=AssemblyDrawing.LoadNodes(doc.Database,tr);LoadNodeChoices(nodes);
+                    var m=nodes.Active();treeMarkId=m?.Id??Guid.Empty;
+                    SetNodeAvailability(this,m!=null);
+                    if(previousMark!=treeMarkId)previous=null;
                     if(m==null)
                     {
-                        markTitle.Text="В DWG нет марки";
+                        markTitle.Text="В DWG нет узлов";
                         newMarkBannerButton.Visible=true;
-                        statusLabel.Text="Нажмите «+ Марка» (NANEW), чтобы начать сборку узла.";
+                        statusLabel.Text="Вставьте семейство или создайте пустой узел на вкладке «Узлы».";
                         statusLabel.ForeColor=SystemColors.ControlDarkDark;
                         UpdateSelectionControls();
                         return;
                     }
                     AssemblyDrawing.Synchronize(doc.Database,tr,m);
-                    markTitle.Text=m.Code+" — "+m.Name;
-                    newMarkBannerButton.Visible=false;
+                    markTitle.Text="Активный: "+m.Code+" — "+m.Name;
+                    newMarkBannerButton.Visible=true;
                     var root=tree.Nodes.Add(m.Code+" — "+m.Name);
                     root.Tag=new NodeTag{Kind=NodeKind.Root};
                     TreeNode selected=null;

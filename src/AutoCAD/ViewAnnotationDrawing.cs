@@ -98,7 +98,7 @@ namespace KotNode.AutoCAD
             var id=styles.Add(st);tr.AddNewlyCreatedDBObject(st,true);
             return id;
         }
-        static AnnoTag ReadTag(Entity e,Transaction tr)
+        internal static AnnoTag ReadTag(Entity e,Transaction tr)
         {
             if(e==null||e.ExtensionDictionary.IsNull)return null;
             var dict=(DBDictionary)tr.GetObject(e.ExtensionDictionary,OpenMode.ForRead);

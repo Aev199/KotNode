@@ -27,7 +27,7 @@ namespace KotNode.AutoCAD
             public double AnnotationScale { get; set; }=20;
             public string SelfHandle { get; set; }
         }
-        static TableTag ReadTag(Entity e,Transaction tr)
+        internal static TableTag ReadTag(Entity e,Transaction tr)
         {
             if(e==null||e.ExtensionDictionary.IsNull)return null;
             var dict=(DBDictionary)tr.GetObject(e.ExtensionDictionary,OpenMode.ForRead);

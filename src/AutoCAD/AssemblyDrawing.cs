@@ -46,23 +46,35 @@ namespace KotNode.AutoCAD
         }
         static DBDictionary Root(Database db,Transaction tr)
             =>(DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId,OpenMode.ForRead);
-        internal static AssemblyMark Load(Database db,Transaction tr)
+        const string NodesKey="KOTNODE_DRAWING_NODES_1";
+        internal static DrawingNodes LoadNodes(Database db,Transaction tr)
         {
-            var mark=Read<AssemblyMark>(Root(db,tr),MarkKey,tr);
-            if(mark!=null)mark.Validate();
-            return mark;
+            var root=Root(db,tr);var nodes=Read<DrawingNodes>(root,NodesKey,tr);
+            if(nodes!=null){nodes.Validate();return nodes;}
+            var legacy=Read<AssemblyMark>(root,MarkKey,tr);
+            nodes=new DrawingNodes();
+            if(legacy!=null){legacy.Validate();nodes.Put(legacy);}
+            return nodes;
+        }
+        internal static AssemblyMark Load(Database db,Transaction tr)=>LoadNodes(db,tr).Active();
+        internal static void SaveNodes(Database db,Transaction tr,DrawingNodes nodes)
+        {
+            nodes.Validate();var root=Root(db,tr);
+            Write(root,NodesKey,nodes,tr);
+            // Old readers must reject this DWG, not treat it as empty or overwrite
+            // an arbitrary node. Current readers always consult NodesKey first.
+            Write(root,MarkKey,new AssemblyMark{Schema=5,Code="MULTI",Name="Несколько узлов — требуется KotNode 0.3.0 или новее"},tr);
         }
         internal static void Save(Database db,Transaction tr,AssemblyMark mark)
         {
-            mark.Validate();
-            Write(Root(db,tr),MarkKey,mark,tr);
+            mark.Validate();var nodes=LoadNodes(db,tr);nodes.Put(mark);SaveNodes(db,tr,nodes);
         }
         internal static BlockTableRecord ModelSpace(Database db,Transaction tr,OpenMode mode=OpenMode.ForRead)
         {
             var bt=(BlockTable)tr.GetObject(db.BlockTableId,OpenMode.ForRead);
             return (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace],mode);
         }
-        static PartTag Tag(BlockReference reference,Transaction tr)
+        internal static PartTag Tag(BlockReference reference,Transaction tr)
         {
             if(reference.ExtensionDictionary.IsNull)return null;
             var tag=Read<PartTag>((DBDictionary)tr.GetObject(reference.ExtensionDictionary,OpenMode.ForRead),PartKey,tr);
@@ -103,7 +115,8 @@ namespace KotNode.AutoCAD
                 if(reference==null)continue;
                 var tag=Tag(reference,tr);
                 if(tag==null)continue;
-                if(tag.MarkId!=mark.Id || !mark.Instances.Any(i=>i.Id==tag.InstanceId) || result.ContainsKey(tag.InstanceId))
+                if(tag.MarkId!=mark.Id)continue;
+                if(!mark.Instances.Any(i=>i.Id==tag.InstanceId) || result.ContainsKey(tag.InstanceId))
                     throw new InvalidOperationException("Обнаружена несогласованная деталь конструктора.");
                 result.Add(tag.InstanceId,reference);
             }
@@ -142,13 +155,19 @@ namespace KotNode.AutoCAD
         internal static void AddAuxiliary(Database db,Transaction tr,AssemblyMark mark,ObjectId[] ids)
         {
             if(ids.Length==0)throw new InvalidOperationException("Не выбрана вспомогательная графика.");
-            var existing=new HashSet<ObjectId>(AuxiliaryGroups(db,tr,mark).SelectMany(g=>g.Item2));
+            var existing=new HashSet<ObjectId>(LoadNodes(db,tr).Nodes.SelectMany(n=>AuxiliaryGroups(db,tr,n)).SelectMany(g=>g.Item2));
             var space=ModelSpace(db,tr);
             foreach(var id in ids)
             {
                 var entity=tr.GetObject(id,OpenMode.ForRead) as Entity;
                 if(entity==null||entity.OwnerId!=space.ObjectId||existing.Contains(id))
                     throw new InvalidOperationException("Объект уже входит во вспомогательный чертёж или находится вне модели.");
+                if(!entity.ExtensionDictionary.IsNull)
+                {
+                    var tags=(DBDictionary)tr.GetObject(entity.ExtensionDictionary,OpenMode.ForRead);
+                    if(tags.Contains(ViewAnnotationDrawing.TagKey)||tags.Contains(AssemblyTableDrawing.TableKey))
+                        throw new InvalidOperationException("Управляемое оформление или таблицу нельзя включить во вспомогательную графику.");
+                }
                 if(entity is BlockReference block && !block.ExtensionDictionary.IsNull &&
                    (((DBDictionary)tr.GetObject(block.ExtensionDictionary,OpenMode.ForRead)).Contains(PartKey)||((DBDictionary)tr.GetObject(block.ExtensionDictionary,OpenMode.ForRead)).Contains(AssemblyViews.Key)))
                     throw new InvalidOperationException("Управляемую деталь или представление нельзя включить во вспомогательную графику.");

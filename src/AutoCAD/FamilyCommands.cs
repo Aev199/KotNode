@@ -32,12 +32,6 @@ namespace KotNode.AutoCAD
             {
                 if(!doc.Database.TileMode||doc.Database.Insunits!=UnitsValue.Millimeters)
                     throw new InvalidOperationException("Откройте пространство модели (TILEMODE=1), единицы DWG — миллиметры (INSUNITS=4).");
-                using(var trCheck=doc.Database.TransactionManager.StartTransaction())
-                {
-                    if(AssemblyDrawing.Load(doc.Database,trCheck)!=null)
-                        throw new InvalidOperationException("В этом DWG уже есть марка. Откройте новый DWG для вставки семейства.");
-                    trCheck.Commit();
-                }
 
                 NodeFamilyTemplate chosen;
                 using(var dlg=new FamilyPickerDialog())
@@ -46,6 +40,10 @@ namespace KotNode.AutoCAD
                     chosen=dlg.Result;
                 }
                 if(chosen==null)return;
+                var point=doc.Editor.GetPoint(new Autodesk.AutoCAD.EditorInput.PromptPointOptions("\nТочка размещения узла в мировой XY (Enter — начало координат): "){AllowNone=true});
+                if(point.Status!=Autodesk.AutoCAD.EditorInput.PromptStatus.OK&&point.Status!=Autodesk.AutoCAD.EditorInput.PromptStatus.None)return;
+                var target=point.Status==Autodesk.AutoCAD.EditorInput.PromptStatus.None?Point3d.Origin:point.Value.TransformBy(doc.Editor.CurrentUserCoordinateSystem);
+                NodePlacement.PlaceFamily(chosen,new Vector3(target.X,target.Y,target.Z));
 
                 using(var tr=doc.Database.TransactionManager.StartTransaction())
                 {
@@ -213,6 +211,12 @@ namespace KotNode.AutoCAD
         public FamilyPickerDialog()
         {
             items=NodeFamilyLibrary.BuiltIn();
+            var doc=AcApp.DocumentManager.MdiActiveDocument;
+            if(doc!=null)using(var tr=doc.Database.TransactionManager.StartTransaction())
+            {
+                var nodes=AssemblyDrawing.LoadNodes(doc.Database,tr);
+                foreach(var item in items)item.Mark.Code=nodes.UniqueCode(item.Mark.Code);
+            }
             AutoScaleMode=AutoScaleMode.Dpi;
             Text="Библиотека параметрических семейств KotNode";
             Font=new Font("Segoe UI",9f);
@@ -292,6 +296,8 @@ namespace KotNode.AutoCAD
                 try
                 {
                     var loaded=NodeFamilyLibrary.Load(dlg.FileName);
+                    var doc=AcApp.DocumentManager.MdiActiveDocument;
+                    if(doc!=null)using(var tr=doc.Database.TransactionManager.StartTransaction())loaded.Mark.Code=AssemblyDrawing.LoadNodes(doc.Database,tr).UniqueCode(loaded.Mark.Code);
                     items.Add(loaded);
                     RefreshList();
                     list.SelectedIndex=items.Count-1;
@@ -337,6 +343,10 @@ namespace KotNode.AutoCAD
                         throw new InvalidOperationException("Неверное число для параметра "+key);
                     overrides[key]=val;
                 }
+                var doc=AcApp.DocumentManager.MdiActiveDocument;
+                if(doc!=null)using(var tr=doc.Database.TransactionManager.StartTransaction())
+                    if(AssemblyDrawing.LoadNodes(doc.Database,tr).Nodes.Any(n=>string.Equals(n.Code.Trim(),codeBox.Text.Trim(),StringComparison.OrdinalIgnoreCase)))
+                        throw new InvalidOperationException("Шифр узла уже занят в этом DWG. Задайте другой шифр.");
                 Result=NodeFamilyLibrary.Instantiate(template,codeBox.Text,nameBox.Text,overrides);
                 DialogResult=DialogResult.OK;Close();
             }

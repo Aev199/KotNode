@@ -59,7 +59,7 @@ static class AssemblyModelTests
         copy = Json.Copy(mark); copy.Instances[0].Placement.AxisY = copy.Instances[0].Placement.AxisX; Reject(copy.Validate,"parallel axes rejected");
         copy = Json.Copy(mark); copy.Parts[0].Pipe = new PipeShape(); Reject(copy.Validate,"ambiguous shape rejected");
         copy = Json.Copy(mark); copy.Parts[0].Kind = (PartKind)99; Reject(copy.Validate,"unknown shape rejected");
-        copy = Json.Copy(mark); copy.Schema = 4; Reject(copy.Validate,"unknown model schema rejected");
+        copy = Json.Copy(mark); copy.Schema = 5; Reject(copy.Validate,"unknown model schema rejected");
         var edited = new AssemblyMark();
         var definition = new PartDefinition { Name = "Лист", Position = "1", IncludeInSpec = true,
             Kind = PartKind.RectangularPlate, Plate = new RectangularPlateShape { Length = 500, Width = 200, Thickness = 12 } };
