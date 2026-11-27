@@ -227,6 +227,31 @@ namespace KotNode.AutoCAD
                             .Any(s=>s.Layer==AssemblyViews.WeldLayer&&Math.Abs(s.GeometricExtents.MaxPoint.X-112)<1e-5),
                             "Edited 12 mm leg updates the linked native section triangle",log);
 
+                        // Shared definitions resolve leaders on physical and explicitly authored section welds.
+                        WeldContext.RegisterExisting(scratch,tr,mark);
+                        var sharedId=physicalWeld.Id;
+                        var sharedSource=WeldContext.Sources(scratch,tr,mark).First(w=>w.Weld.Id==sharedId).Weld;
+                        secEntry.Data.Leaders.Add(new ViewLeader{Kind=ViewLeaderKind.Weld,
+                            Target=new ViewAnchor{Kind=ViewAnchorKind.WeldMidpoint,WeldId=sharedId},LandingOffsetX=150,LandingOffsetY=80});
+                        WeldCatalog.Set(mark,sharedSource.DefinitionId,10,ViewWeldStyle.Site);
+                        AssemblyViews.Rebuild(scratch,tr,mark,refs,secEntry);
+                        var sectionRaw=ParametricViewDrawing.ComputeRawCurves(mark,secEntry.Data);
+                        var allEffective=WeldContext.Effective(mark,WeldContext.Sources(scratch,tr,mark));
+                        var sectionPatches=WeldContext.Patches(mark,secEntry.Data,sectionRaw,allEffective);
+                        var sharedLeader=ViewAnnotations.ResolveLeaders(secEntry.Data.Leaders,mark,sectionRaw,allEffective,
+                            secEntry.Data.AnnotationScale,out var missingShared,sectionPatches);
+                        Assert(sharedLeader.Any(l=>l.Text=="10")&&missingShared==0,
+                            "Section leader resolves a remote source weld and reads its shared leg",log);
+                        var cutEdge=sectionRaw.First(c=>c.Cut);
+                        var authored=new ViewWeldOverlay{InstanceId=cutEdge.InstanceId,SourceKey=cutEdge.SourceKey,SectionOnly=true,
+                            DefinitionId=sharedSource.DefinitionId,SectionAnchor=new ViewAnchor{Kind=ViewAnchorKind.EdgePoint,
+                                InstanceId=cutEdge.InstanceId,SourceKey=cutEdge.SourceKey,Param=(cutEdge.SourceFrom+cutEdge.SourceTo)/2}};
+                        WeldCatalog.Register(mark,authored);secEntry.Data.Welds.Add(authored);
+                        AssemblyViews.Rebuild(scratch,tr,mark,refs,secEntry);
+                        sectionPatches=WeldContext.Patches(mark,secEntry.Data,sectionRaw,WeldContext.Effective(mark,WeldContext.Sources(scratch,tr,mark)));
+                        Assert(sectionPatches.Any(p=>p.WeldId==authored.Id),
+                            "Explicit section-only weld is rendered alongside physical cuts",log);
+
                         // Stage 6 & 7: Native Tables (NASPEC, NAVRS, NAPROJVRS) + Update in-place
                         var msW=AssemblyDrawing.ModelSpace(scratch,tr,OpenMode.ForWrite);
                         var specTbl=AssemblyTableDrawing.RenderTable(scratch,tr,msW,null,new Point3d(4500,500,0),20,AssemblyReporting.BuildMarkSpec(mark));

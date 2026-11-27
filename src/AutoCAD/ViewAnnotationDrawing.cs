@@ -214,8 +214,10 @@ namespace KotNode.AutoCAD
 
             CaptureOffsets(entry,existing);
 
-            var resolvedDims=ViewAnnotations.ResolveDimensions(data.Dimensions,rawCurves,data.Welds,scale,out var unmatchedDims);
-            var resolvedLeaders=ViewAnnotations.ResolveLeaders(data.Leaders,mark,rawCurves,data.Welds,scale,out var unmatchedLeaders);
+            var welds=WeldContext.Effective(mark,WeldContext.Sources(db,tr,mark,entry));
+            var patches=WeldContext.Patches(mark,data,rawCurves,welds);
+            var resolvedDims=ViewAnnotations.ResolveDimensions(data.Dimensions,rawCurves,welds,scale,out var unmatchedDims,patches);
+            var resolvedLeaders=ViewAnnotations.ResolveLeaders(data.Leaders,mark,rawCurves,welds,scale,out var unmatchedLeaders,patches);
             data.UnmatchedAnnotations+=unmatchedDims+unmatchedLeaders;
 
             var keep=new HashSet<ObjectId>();

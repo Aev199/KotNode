@@ -96,12 +96,13 @@ namespace KotNode.AutoCAD
             if(result.Curves.Count==0)throw new InvalidOperationException("Параметрическое представление пустое: проверьте направление и секущую плоскость.");
             var chains=ViewLineOverrides.Chain(result.Curves);
             double scale=data.AnnotationScale>0?data.AnnotationScale:20;
-            var weldStrokes=ViewWelds.Build(rawCurves,data.Welds,scale,out var unmatchedWelds);
+            var localWelds=(data.Welds??new List<ViewWeldOverlay>()).Select(w=>WeldCatalog.Effective(mark,w)).ToList();
+            var weldStrokes=ViewWelds.Build(rawCurves,localWelds,scale,out var unmatchedWelds);
             data.UnmatchedWelds=unmatchedWelds;
-            var sectionWelds=data.IsSection
-                ? WeldSections.Build(mark,data.Frame,AssemblyViews.Find(db,tr,mark).Where(v=>v.Data.Id!=data.Id)
-                    .SelectMany(v=>v.Data.Welds??new List<ViewWeldOverlay>()).Concat(data.Welds??new List<ViewWeldOverlay>()))
-                : new List<WeldCutPatch>();
+            var allWelds=WeldContext.Effective(mark,WeldContext.Sources(db,tr,mark,new AssemblyViews.Entry{Data=data}));
+            var sectionWelds=WeldContext.Patches(mark,data,rawCurves,allWelds);
+            WeldSections.BuildLocal(rawCurves,localWelds,out var unmatchedLocalWelds);
+            data.UnmatchedWelds+=unmatchedLocalWelds;
             var axisStrokes=ViewAnnotations.BuildAxes(data.Axes,rawCurves,scale,out var unmatchedAxes);
             var callouts=ViewAnnotations.BuildSectionCallouts(data.SectionCallouts,rawCurves,viewNameLookup,scale,out var unmatchedCallouts);
             data.UnmatchedAnnotations=unmatchedAxes+unmatchedCallouts;

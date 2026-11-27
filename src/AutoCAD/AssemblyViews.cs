@@ -16,7 +16,7 @@ namespace KotNode.AutoCAD
     public static class AssemblyViews
     {
         internal const string Key="KOTNODE_VIEW_1";
-        internal const int Revision=21;
+        internal const int Revision=22;
         internal const string VisibleLayer="NA_VISIBLE",HiddenLayer="NA_HIDDEN",CutLayer="NA_CUT",HatchLayer="NA_HATCH",WeldLayer="NA_WELD";
         static double PaperScale(ViewData d)=>d.AnnotationScale>0?d.AnnotationScale:20;
         static void Layers(Database db,Transaction tr)
@@ -111,7 +111,7 @@ namespace KotNode.AutoCAD
             }
             return result;
         }
-        static void Save(BlockReference b,Transaction tr,ViewData data)
+        internal static void Save(BlockReference b,Transaction tr,ViewData data)
         {
             if(!b.IsWriteEnabled)b.UpgradeOpen();
             if(b.ExtensionDictionary.IsNull)b.CreateExtensionDictionary();

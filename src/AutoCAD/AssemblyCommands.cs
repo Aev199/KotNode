@@ -1131,9 +1131,11 @@ namespace KotNode.AutoCAD
                 {
                     var m=Need(doc,tr);
                     var refs=AssemblyDrawing.Synchronize(doc.Database,tr,m);
+                    WeldContext.RegisterExisting(doc.Database,tr,m);
                     var entry=AssemblyViews.Find(doc.Database,tr,m).SingleOrDefault(e=>e.Data.Id==selected.Id);
                     if(entry==null)throw new InvalidOperationException("Представление не найдено.");
                     if(entry.Data.Welds==null)entry.Data.Welds=new List<ViewWeldOverlay>();
+                    foreach(var w in allWelds)WeldCatalog.Register(m,w);
                     entry.Data.Welds.AddRange(allWelds);
                     AssemblyViews.Rebuild(doc.Database,tr,m,refs,entry);
                     AssemblyViews.Update(doc.Database,tr,m,refs);

@@ -158,7 +158,7 @@ namespace KotNode.Core
             }
             return false;
         }
-        public static Point2 ResolveAnchor(ViewAnchor anchor,IEnumerable<ParametricProjection.Curve2> rawCurves,IEnumerable<ViewWeldOverlay> welds,double scale,out double radius)
+        public static Point2 ResolveAnchor(ViewAnchor anchor,IEnumerable<ParametricProjection.Curve2> rawCurves,IEnumerable<ViewWeldOverlay> welds,double scale,out double radius,IEnumerable<WeldCutPatch> sectionPatches=null)
         {
             radius=0;
             if(anchor==null)return null;
@@ -203,6 +203,8 @@ namespace KotNode.Core
             }
             if(anchor.Kind==ViewAnchorKind.WeldMidpoint)
             {
+                var patch=sectionPatches?.FirstOrDefault(p=>p.WeldId==anchor.WeldId);
+                if(patch!=null&&patch.Points.Count>0)return new Point2(patch.Points.Average(p=>p.X),patch.Points.Average(p=>p.Y));
                 var group=(welds??Enumerable.Empty<ViewWeldOverlay>()).Where(x=>x.Id==anchor.WeldId||x.GroupId==anchor.WeldId).ToList();
                 if(group.Count==0)return null;
                 var strokes=ViewWelds.Build(curves,group,scale,out var unmatched);
@@ -272,7 +274,7 @@ namespace KotNode.Core
             }
             return best;
         }
-        public static List<ResolvedDimension> ResolveDimensions(IEnumerable<ViewDimension> dims,IEnumerable<ParametricProjection.Curve2> rawCurves,IEnumerable<ViewWeldOverlay> welds,double scale,out int unmatched)
+        public static List<ResolvedDimension> ResolveDimensions(IEnumerable<ViewDimension> dims,IEnumerable<ParametricProjection.Curve2> rawCurves,IEnumerable<ViewWeldOverlay> welds,double scale,out int unmatched,IEnumerable<WeldCutPatch> sectionPatches=null)
         {
             var result=new List<ResolvedDimension>();unmatched=0;
             if(dims==null)return result;
@@ -283,7 +285,7 @@ namespace KotNode.Core
                 ValidateDimension(d);
                 if(d.Kind==ViewDimensionKind.Diameter||d.Kind==ViewDimensionKind.Radius)
                 {
-                    var c=ResolveAnchor(d.AnchorA,curves,weldList,scale,out var r);
+                    var c=ResolveAnchor(d.AnchorA,curves,weldList,scale,out var r,sectionPatches);
                     if(c==null||r<=1e-6){unmatched++;continue;}
                     double ang=Math.Atan2(d.OffsetY,d.OffsetX);
                     if(Math.Abs(d.OffsetX)+Math.Abs(d.OffsetY)<=1e-6)ang=Math.PI/4;
@@ -293,8 +295,8 @@ namespace KotNode.Core
                 }
                 else
                 {
-                    var a=ResolveAnchor(d.AnchorA,curves,weldList,scale,out _);
-                    var b=ResolveAnchor(d.AnchorB,curves,weldList,scale,out _);
+                    var a=ResolveAnchor(d.AnchorA,curves,weldList,scale,out _,sectionPatches);
+                    var b=ResolveAnchor(d.AnchorB,curves,weldList,scale,out _,sectionPatches);
                     if(a==null||b==null||Dist(a,b)<=1e-6){unmatched++;continue;}
                     var mid=new Point2((a.X+b.X)/2,(a.Y+b.Y)/2);
                     result.Add(new ResolvedDimension{Source=d,A=a,B=b,LinePoint=new Point2(mid.X+d.OffsetX,mid.Y+d.OffsetY)});
@@ -323,7 +325,7 @@ namespace KotNode.Core
             }
             return "";
         }
-        public static List<ResolvedLeader> ResolveLeaders(IEnumerable<ViewLeader> leaders,AssemblyMark mark,IEnumerable<ParametricProjection.Curve2> rawCurves,IEnumerable<ViewWeldOverlay> welds,double scale,out int unmatched)
+        public static List<ResolvedLeader> ResolveLeaders(IEnumerable<ViewLeader> leaders,AssemblyMark mark,IEnumerable<ParametricProjection.Curve2> rawCurves,IEnumerable<ViewWeldOverlay> welds,double scale,out int unmatched,IEnumerable<WeldCutPatch> sectionPatches=null)
         {
             var result=new List<ResolvedLeader>();unmatched=0;
             if(leaders==null)return result;
@@ -332,7 +334,7 @@ namespace KotNode.Core
             foreach(var l in leaders)
             {
                 ValidateLeader(l);
-                var tip=ResolveAnchor(l.Target,curves,weldList,scale,out _);
+                var tip=ResolveAnchor(l.Target,curves,weldList,scale,out _,sectionPatches);
                 if(tip==null){unmatched++;continue;}
                 var landing=new Point2(tip.X+l.LandingOffsetX,tip.Y+l.LandingOffsetY);
                 result.Add(new ResolvedLeader{Source=l,Tip=tip,Landing=landing,Text=FormatLeaderText(l,mark,weldList)});

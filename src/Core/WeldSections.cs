@@ -31,12 +31,55 @@ namespace KotNode.Core
             }
             return false;
         }
+        public static bool TryLocalFrame(ViewAnchor anchor,IList<ParametricProjection.Curve2> curves,out Point2 origin,out Point2 tangent)
+        {
+            origin=ViewAnnotations.ResolveAnchor(anchor,curves,null,1,out _);tangent=null;
+            if(origin==null||anchor==null)return false;
+            var c=curves.FirstOrDefault(x=>x.InstanceId==anchor.InstanceId&&x.SourceKey==anchor.SourceKey&&
+                anchor.Param>=Math.Min(x.SourceFrom,x.SourceTo)-1e-8&&anchor.Param<=Math.Max(x.SourceFrom,x.SourceTo)+1e-8);
+            if(c==null)return false;
+            double sign=Math.Sign(c.SourceTo-c.SourceFrom),dx,dy;
+            if(c.Circular)
+            {
+                double t=(anchor.Param-c.SourceFrom)/(c.SourceTo-c.SourceFrom),a=c.Start+c.Sweep*t;
+                dx=-Math.Sin(a)*sign*Math.Sign(c.Sweep);dy=Math.Cos(a)*sign*Math.Sign(c.Sweep);
+            }
+            else{dx=(c.X1-c.X0)*sign;dy=(c.Y1-c.Y0)*sign;}
+            double length=Math.Sqrt(dx*dx+dy*dy);if(length<1e-9)return false;
+            tangent=new Point2(dx/length,dy/length);return true;
+        }
+        public static List<WeldCutPatch> BuildLocal(IList<ParametricProjection.Curve2> curves,IEnumerable<ViewWeldOverlay> welds,out int unmatched)
+        {
+            var result=new List<WeldCutPatch>();unmatched=0;
+            foreach(var w in welds??Enumerable.Empty<ViewWeldOverlay>())
+            {
+                if(!w.SectionOnly)continue;ViewWelds.Validate(w);
+                if(!TryLocalFrame(w.SectionAnchor,curves,out var root,out var direction)){unmatched++;continue;}
+                double tx=direction.X*w.SectionAlongSign,ty=direction.Y*w.SectionAlongSign,nx=-ty,ny=tx;
+                var p=new Point2(root.X+nx*w.OffsetMm,root.Y+ny*w.OffsetMm);
+                foreach(var side in w.Side==ViewWeldSide.Both?new[]{-1,1}:new[]{(int)w.Side})
+                    result.Add(new WeldCutPatch{WeldId=w.Id,Points=new List<Point2>{p,new Point2(p.X+tx*w.LegMm,p.Y+ty*w.LegMm),new Point2(p.X+nx*side*w.LegMm,p.Y+ny*side*w.LegMm)}});
+            }
+            return result;
+        }
+        public static double Distance(WeldCutPatch patch,double x,double y)
+        {
+            if(patch?.Points==null||patch.Points.Count<3)return double.PositiveInfinity;
+            bool positive=false,negative=false;double nearest=double.PositiveInfinity;
+            for(int i=0;i<patch.Points.Count;i++)
+            {
+                var a=patch.Points[i];var b=patch.Points[(i+1)%patch.Points.Count];
+                double cross=(b.X-a.X)*(y-a.Y)-(b.Y-a.Y)*(x-a.X);positive|=cross>1e-9;negative|=cross<-1e-9;
+                nearest=Math.Min(nearest,ViewLineOverrides.DistanceToCurve(new ParametricProjection.Curve2{X0=a.X,Y0=a.Y,X1=b.X,Y1=b.Y},x,y,out _,out _,out _));
+            }
+            return positive&&negative?nearest:0;
+        }
         public static List<WeldCutPatch> Build(AssemblyMark mark,RigidPlacement frame,IEnumerable<ViewWeldOverlay> welds)
         {
             var result=new List<WeldCutPatch>();frame.Validate();
             foreach(var w in welds??Enumerable.Empty<ViewWeldOverlay>())
             {
-                if(w.ShowInSections==false||!TryEdge(w.SourceKey,out var edge))continue;
+                if(w.SectionOnly||w.ShowInSections==false||!TryEdge(w.SourceKey,out var edge))continue;
                 var inst=mark.Instances.FirstOrDefault(i=>i.Id==w.InstanceId);
                 var part=inst==null?null:mark.Parts.FirstOrDefault(p=>p.Id==inst.PartId);
                 if(part?.Kind!=PartKind.CurvedPlate)continue;

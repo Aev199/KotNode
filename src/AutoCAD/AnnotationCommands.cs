@@ -176,43 +176,32 @@ namespace KotNode.AutoCAD
         });
         [CommandMethod("NAWELDLEADER",CommandFlags.Modal)]
         public void AddWeldLeader()=>RunSafe("NAWELDLEADER",doc=>{
-            var views=PrepareViews(doc);
-            var ed=doc.Editor;
-            var p=ed.GetPoint("\nУкажите параметрический сварной шов на виде: ");
-            if(p.Status!=PromptStatus.OK)return;
-            var world=p.Value.TransformBy(ed.CurrentUserCoordinateSystem);
-            double tol=PickTol();
-            ViewSnapContext bestView=null;ViewWeldOverlay bestWeld=null;Point2 bestMid=null;double bestDist=double.PositiveInfinity;
-            foreach(var v in views)
+            using(var tr=doc.Database.TransactionManager.StartTransaction())
             {
-                if(v.Welds==null||v.Welds.Count==0)continue;
-                var local=world.TransformBy(v.ToLocal);
-                foreach(var w in v.Welds)
-                {
-                    var strokes=ViewWelds.Build(v.RawCurves,new[]{w},v.AnnotationScale,out _);
-                    foreach(var s in strokes)
-                    {
-                        double mx=(s.X0+s.X1)/2,my=(s.Y0+s.Y1)/2;
-                        double d=Math.Sqrt((local.X-mx)*(local.X-mx)+(local.Y-my)*(local.Y-my));
-                        if(d<=tol&&d<bestDist){bestDist=d;bestView=v;bestWeld=w;bestMid=new Point2(mx,my);}
-                    }
-                }
+                var mark=AssemblyDrawing.Load(doc.Database,tr);
+                if(mark==null)throw new InvalidOperationException("В DWG нет марки.");
+                var refs=AssemblyDrawing.Synchronize(doc.Database,tr,mark);
+                if(WeldContext.RegisterExisting(doc.Database,tr,mark))AssemblyViews.Update(doc.Database,tr,mark,refs);
+                var p=doc.Editor.GetPoint("\nУкажите ряд шва на виде или треугольник шва на сечении: ");
+                if(p.Status!=PromptStatus.OK)return;
+                var hit=WeldContext.Pick(doc.Database,tr,mark,p.Value.TransformBy(doc.Editor.CurrentUserCoordinateSystem),PickTol());
+                if(hit==null)throw new InvalidOperationException("Шов не найден. Создайте его через NAWELD или NAWELDSECTION.");
+                var entry=hit.Displayed;var raw=ParametricViewDrawing.ComputeRawCurves(mark,entry.Data);
+                var all=WeldContext.Effective(mark,WeldContext.Sources(doc.Database,tr,mark,entry));
+                var patches=WeldContext.Patches(mark,entry.Data,raw,all);
+                var anchor=new ViewAnchor{Kind=ViewAnchorKind.WeldMidpoint,WeldId=hit.Source.Weld.Id};
+                var at=ViewAnnotations.ResolveAnchor(anchor,raw,all,entry.Data.AnnotationScale,out _,patches);
+                if(at==null)throw new InvalidOperationException("Не удалось разрешить привязку шва.");
+                var point=doc.Editor.GetPoint("\nПоложение полки катета: ");
+                if(point.Status!=PromptStatus.OK)return;
+                var local=point.Value.TransformBy(doc.Editor.CurrentUserCoordinateSystem).TransformBy(entry.Reference.BlockTransform.Inverse());
+                if(entry.Data.Leaders==null)entry.Data.Leaders=new List<ViewLeader>();
+                entry.Data.Leaders.Add(new ViewLeader{Kind=ViewLeaderKind.Weld,Target=anchor,LandingOffsetX=local.X-at.X,LandingOffsetY=local.Y-at.Y});
+                AssemblyViews.Rebuild(doc.Database,tr,mark,refs,entry);
+                AssemblyDrawing.Save(doc.Database,tr,mark);tr.Commit();
             }
-            if(bestWeld==null)throw new InvalidOperationException("Рядом с точкой нет параметрического сварного шва. Сначала нанесите шов командой NAWELD.");
-            var land=ed.GetPoint("\nПоложение полки выноски шва: ");
-            if(land.Status!=PromptStatus.OK)return;
-            var locLand=land.Value.TransformBy(ed.CurrentUserCoordinateSystem).TransformBy(bestView.ToLocal);
-            var weldAnchor=new ViewAnchor{Kind=ViewAnchorKind.WeldMidpoint,WeldId=bestWeld.Id};
-            var anchorPoint=ViewAnnotations.ResolveAnchor(weldAnchor,bestView.RawCurves,bestView.Welds,bestView.AnnotationScale,out _);
-            if(anchorPoint==null)throw new InvalidOperationException("Не удалось разрешить привязку шва.");
-            var leader=new ViewLeader
-            {
-                Kind=ViewLeaderKind.Weld,
-                Target=weldAnchor,
-                LandingOffsetX=locLand.X-anchorPoint.X,LandingOffsetY=locLand.Y-anchorPoint.Y
-            };
-            CommitViewMutation(doc,bestView.ViewId,d=>{if(d.Leaders==null)d.Leaders=new List<ViewLeader>();d.Leaders.Add(leader);});
-            ed.WriteMessage("\nВыноска сварного шва добавлена.");
+            doc.TransactionManager.QueueForGraphicsFlush();doc.Editor.Regen();AssemblyCommands.RefreshPalette(doc);
+            doc.Editor.WriteMessage("\nАссоциативная выноска общего катета добавлена.");
         });
         [CommandMethod("NAAXIS",CommandFlags.Modal)]
         public void AddAxis()=>RunSafe("NAAXIS",doc=>{

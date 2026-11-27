@@ -14,6 +14,7 @@ namespace KotNode.Core
         public string Name { get; set; } = "Произвольный узел";
         public List<PartDefinition> Parts { get; set; } = new List<PartDefinition>();
         public List<PartInstance> Instances { get; set; } = new List<PartInstance>();
+        public List<WeldDefinition> WeldDefinitions { get; set; }=new List<WeldDefinition>();
         public List<MarkParameter> Parameters { get; set; } = new List<MarkParameter>();
         public List<PartBinding> Bindings { get; set; } = new List<PartBinding>();
         public List<PolygonBinding> PolygonBindings { get; set; } = new List<PolygonBinding>();
@@ -21,8 +22,12 @@ namespace KotNode.Core
 
         public void Validate()
         {
-            Guard.Require(Schema == 1 && Id != Guid.Empty && Guard.Text(Code) && Guard.Text(Name), "Неверная марка или версия модели.");
+            Guard.Require((Schema == 1 || Schema == 2) && Id != Guid.Empty && Guard.Text(Code) && Guard.Text(Name), "Неверная марка или версия модели.");
             Guard.Require(Parts != null && Instances != null, "Отсутствует состав марки.");
+            Guard.Require(Schema==2||WeldDefinitions==null||WeldDefinitions.Count==0,"Определения швов требуют версии модели 2.");
+            var weldIds=new HashSet<Guid>();
+            foreach(var definition in WeldDefinitions??new List<WeldDefinition>())
+            {Guard.Require(definition!=null,"Пустое определение шва.");definition.Validate();Guard.Require(weldIds.Add(definition.Id),"Дубли определений швов.");}
             var ids = new HashSet<Guid>();
             var positions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var p in Parts)

@@ -10,6 +10,10 @@ namespace KotNode.Core
     public sealed class ViewWeldOverlay
     {
         public Guid Id { get; set; }=Guid.NewGuid();
+        public Guid DefinitionId { get; set; }
+        public bool SectionOnly { get; set; }
+        public ViewAnchor SectionAnchor { get; set; }
+        public int SectionAlongSign { get; set; }=1;
         public Guid BatchId { get; set; }
         public Guid GroupId { get; set; }
         public Guid InstanceId { get; set; }
@@ -41,6 +45,12 @@ namespace KotNode.Core
                 !Enum.IsDefined(typeof(ViewWeldStyle),w.Style)||!Enum.IsDefined(typeof(ViewWeldSide),w.Side)||
                 !Guard.Finite(w.LegMm)||w.LegMm<=0||w.LegMm>100||!Guard.Finite(w.OffsetMm))
                 throw new InvalidDataException("Повреждена запись параметрического сварного шва.");
+            if(w.SectionOnly)
+            {
+                ViewAnnotations.ValidateAnchor(w.SectionAnchor);
+                if(w.SectionAnchor.Kind!=ViewAnchorKind.EdgePoint||w.SectionAnchor.InstanceId!=w.InstanceId||w.SectionAnchor.SourceKey!=w.SourceKey||Math.Abs(w.SectionAlongSign)!=1)
+                    throw new InvalidDataException("Неверная привязка шва на сечении.");
+            }
         }
         public static ViewWeldSide SideFromPoint(CurveChain chain,double x,double y)
         {
@@ -171,6 +181,7 @@ namespace KotNode.Core
             unmatched=0;
             foreach(var w in list)
             {
+                if(w.SectionOnly)continue;
                 var matched=new List<ParametricProjection.Curve2>();
                 foreach(var c in curves)
                 {
