@@ -24,7 +24,7 @@ namespace KotNode.Core
             if(w.DefinitionId==Guid.Empty)w.DefinitionId=w.GroupId==Guid.Empty?w.Id:w.GroupId;
             if(!mark.WeldDefinitions.Any(d=>d.Id==w.DefinitionId))
             {
-                mark.Schema=2;
+                mark.Schema=Math.Max(mark.Schema,2);
                 mark.WeldDefinitions.Add(new WeldDefinition{Id=w.DefinitionId,LegMm=w.LegMm,Style=w.Style});
             }
             return w.DefinitionId;

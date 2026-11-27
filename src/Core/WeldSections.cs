@@ -27,7 +27,9 @@ namespace KotNode.Core
                 if(part?.Kind!=PartKind.Pipe)continue;
                 var delta=new Vector3(world.X-inst.Placement.Origin.X,world.Y-inst.Placement.Origin.Y,world.Z-inst.Placement.Origin.Z);
                 double x=delta.Dot(inst.Placement.AxisX),y=delta.Dot(inst.Placement.AxisY),z=delta.Dot(inst.Placement.AxisX.Cross(inst.Placement.AxisY));
-                if(z>=-1e-6&&z<=part.Pipe.Length+1e-6&&Math.Abs(Math.Sqrt(x*x+y*y)-part.Pipe.OuterDiameter/2)<1e-5)return true;
+                double start=MemberEndCuts.HasCuts(part)?MemberEndCuts.Z(part,true,x,y):0;
+                double end=MemberEndCuts.HasCuts(part)?MemberEndCuts.Z(part,false,x,y):part.Pipe.Length;
+                if(z>=start-1e-6&&z<=end+1e-6&&Math.Abs(Math.Sqrt(x*x+y*y)-part.Pipe.OuterDiameter/2)<1e-5)return true;
             }
             return false;
         }

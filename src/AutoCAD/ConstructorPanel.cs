@@ -192,7 +192,7 @@ namespace KotNode.AutoCAD
             AddGridButton(grid,2,0,"Массив","NAARRAY","Линейный массив детали (NAARRAY)");
             AddGridButton(grid,0,1,"Отделить поз.","NADETACH","Выделить экземпляр в отдельную позицию (NADETACH)");
             AddGridButton(grid,1,1,"Удалить","NADELETE","Удалить деталь с чертежа и из марки (NADELETE)");
-            AddGridButton(grid,2,1,"Синхрон.","NASYNC","Записать положения после MOVE/ROTATE (NASYNC)");
+            AddGridButton(grid,2,1,"Подрезка торца","NATRIM","Подрезать трубу/двутавр плоскостью; сброс через Clear (NATRIM)");
             var paramBtn=GridButton("Параметры / формулы","NAPARAMS","Редактор параметров и формул семейства (NAPARAMS)");
             paramBtn.Font=new Font(Font,FontStyle.Bold);
             grid.Controls.Add(paramBtn,0,2);grid.SetColumnSpan(paramBtn,2);
@@ -286,6 +286,7 @@ namespace KotNode.AutoCAD
             {
                 treeMenu.Items.Add("Выбрать на чертеже",null,(s,e)=>PickSelected());
                 treeMenu.Items.Add("Свойства детали (NAEDIT)",null,(s,e)=>Queue("NAEDIT"));
+                treeMenu.Items.Add("Подрезка торца (NATRIM)",null,(s,e)=>Queue("NATRIM"));
                 treeMenu.Items.Add(new ToolStripSeparator());
                 treeMenu.Items.Add("Удалить из марки",null,(s,e)=>DeleteSelected());
             }

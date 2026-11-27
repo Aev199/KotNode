@@ -350,6 +350,7 @@ namespace KotNode.AutoCAD
             var solids=part.Kind==PartKind.Rebar?BarBodies(part.Rebar):new List<Solid3d>{Solid(part)};
             try
             {
+                foreach(var solid in solids)MemberCutDrawing.Apply(solid,part);
                 var bt=(BlockTable)tr.GetObject(db.BlockTableId,OpenMode.ForWrite);
                 var block=new BlockTableRecord { Name="NA_"+Guid.NewGuid().ToString("N"),Units=UnitsValue.Millimeters };
                 var id=bt.Add(block);tr.AddNewlyCreatedDBObject(block,true);

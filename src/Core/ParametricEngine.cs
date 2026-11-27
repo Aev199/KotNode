@@ -276,6 +276,19 @@ namespace KotNode.Core
 
         static void ApplyBinding(PartDefinition part,string prop,double val)
         {
+            if(prop!=null&&prop.StartsWith("EndCuts.",StringComparison.Ordinal))
+            {
+                Guard.Require(part.Kind==PartKind.Pipe||part.Kind==PartKind.IBeam,"Подрезки доступны только для труб и двутавров.");
+                var bits=prop.Split('.');
+                Guard.Require(bits.Length==3&&(bits[1]=="Start"||bits[1]=="End")&&(bits[2]=="AngleXDeg"||bits[2]=="AngleYDeg"||bits[2]=="OffsetMm"),"Неизвестное свойство подрезки.");
+                if(part.EndCuts==null)part.EndCuts=new MemberEndTreatment();
+                var cut=bits[1]=="Start"?part.EndCuts.Start:part.EndCuts.End;
+                if(cut==null){cut=new PlanarEndCut();if(bits[1]=="Start")part.EndCuts.Start=cut;else part.EndCuts.End=cut;}
+                if(bits[2]=="AngleXDeg")cut.AngleXDeg=val;
+                else if(bits[2]=="AngleYDeg")cut.AngleYDeg=val;
+                else cut.OffsetMm=val;
+                return;
+            }
             switch(prop)
             {
                 case "Pipe.OuterDiameter": Guard.Require(part.Kind==PartKind.Pipe,"Привязка Pipe.* только для трубы.");part.Pipe.OuterDiameter=val;break;
@@ -523,8 +536,10 @@ namespace KotNode.Core
                 }
             }
 
+            if(draft.Parts.Any(MemberEndCuts.HasCuts))draft.Schema=Math.Max(draft.Schema,3);
             draft.Validate();
             // Commit validated draft back into mark
+            mark.Schema=draft.Schema;
             mark.Parts=draft.Parts;
             mark.Instances=draft.Instances;
             mark.Parameters=draft.Parameters;

@@ -306,7 +306,7 @@ namespace KotNode.Core
             var stable=SpatialProjection.Build(mark,view,section,true);
             // Geometry optimization must never choose the identity scheme. The
             // spatial physical keys stay the same when an unrelated shape is added.
-            if(mark.Parts.All(p=>p.Kind==PartKind.Pipe||p.Kind==PartKind.RectangularPlate))
+            if(mark.Parts.All(p=>!MemberEndCuts.HasCuts(p)&&(p.Kind==PartKind.Pipe||p.Kind==PartKind.RectangularPlate)))
             {
                 try
                 {
@@ -341,7 +341,7 @@ namespace KotNode.Core
             foreach(var instance in mark.Instances)
             {
                 var part=mark.Parts.Single(p=>p.Id==instance.PartId);
-                if(part.Kind!=PartKind.Pipe&&part.Kind!=PartKind.RectangularPlate){aligned=false;break;}
+                if(MemberEndCuts.HasCuts(part)||(part.Kind!=PartKind.Pipe&&part.Kind!=PartKind.RectangularPlate)){aligned=false;break;}
                 try
                 {
                     if(part.Kind==PartKind.Pipe)Axis(InFrame(instance.Placement.AxisX.Cross(instance.Placement.AxisY),view,true));

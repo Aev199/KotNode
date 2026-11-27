@@ -291,6 +291,39 @@ namespace KotNode.AutoCAD
                     }
                 });
 
+                // Plane cuts: native ACIS volume must lose material while stock takeoff stays unchanged.
+                using(var cutDb=new Database(true,true))
+                WithDatabase(cutDb,_=>{
+                    using(var tr=cutDb.TransactionManager.StartTransaction())
+                    {
+                        var mark=new AssemblyMark{Schema=3,Code="CUT-E2E",Name="Подрезки"};
+                        var definitions=new[]{
+                            new PartDefinition{Name="Труба",Position="1",IncludeInSpec=true,Kind=PartKind.Pipe,Pipe=new PipeShape{OuterDiameter=200,Thickness=10,Length=1000}},
+                            new PartDefinition{Name="Двутавр",Position="2",IncludeInSpec=true,Kind=PartKind.IBeam,IBeam=BeamCatalog.Create("30Б2",1000)}};
+                        foreach(var part in definitions)
+                        {
+                            double mass=part.UnitMassKg();
+                            var stockId=AssemblyDrawing.Geometry(cutDb,tr,part);
+                            var stock=(BlockTableRecord)tr.GetObject(stockId,OpenMode.ForRead);
+                            double volume=stock.Cast<ObjectId>().Select(id=>tr.GetObject(id,OpenMode.ForRead)).OfType<Solid3d>().Single().MassProperties.Volume;
+                            part.EndCuts=new MemberEndTreatment{Start=new PlanarEndCut{AngleXDeg=20,AngleYDeg=10,OffsetMm=5},End=new PlanarEndCut{AngleXDeg=-30,AngleYDeg=15,OffsetMm=8}};
+                            var geometry=AssemblyDrawing.Geometry(cutDb,tr,part);
+                            var cut=(BlockTableRecord)tr.GetObject(geometry,OpenMode.ForRead);
+                            var body=cut.Cast<ObjectId>().Select(id=>tr.GetObject(id,OpenMode.ForRead)).OfType<Solid3d>().Single();
+                            double expected=volume*(MemberEndCuts.Intercept(part,false)-MemberEndCuts.Intercept(part,true))/MemberEndCuts.Length(part);
+                            Assert(Math.Abs(body.MassProperties.Volume-expected)<Math.Max(1e-3,expected*1e-7),
+                                part.Kind+" native slices retain the intended side at both oblique ends",log);
+                            Assert(part.UnitMassKg()==mass,part.Kind+" takeoff retains original stock mass after ACIS slicing",log);
+                            mark.AddPart(part,new RigidPlacement());
+                        }
+                        AssemblyDrawing.Save(cutDb,tr,mark);
+                        var restored=AssemblyDrawing.Load(cutDb,tr);
+                        Assert(restored.Schema==3&&restored.Parts.All(p=>p.EndCuts.Start!=null&&p.EndCuts.End!=null),
+                            "Cut definitions persist in DWG model data",log);
+                        tr.Commit();
+                    }
+                });
+
                 // --- TEST 2: All 4 Built-In Families + Live 3D Angled Pipe-to-Waler Re-Solve + SaveAs DWG ---
                 var families=NodeFamilyLibrary.BuiltIn();
                 for(int fi=0;fi<3;fi++)

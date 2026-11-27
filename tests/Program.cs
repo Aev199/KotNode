@@ -55,6 +55,7 @@ class Program
   Check(ViewGeometryStamp.Record((string)null)!=ViewGeometryStamp.Record(""),"view stamp null distinct");
   StabilizationTests.Run();
   WeldEditingTests.Run();
+  MemberEndCutTests.Run();
   WeldLinkingTests.Run();
   ParametricProjectionTests.Run();
   SectionHatchBoundaryTests.Run();

@@ -69,19 +69,19 @@ namespace KotNode.Core
         static double Dist2(Vector3 a,Vector3 b){var d=Sub(a,b);return d.Dot(d);}
         static double Len2(Vector3 a,Vector3 b)=>Math.Pow(a.X-b.X,2)+Math.Pow(a.Y-b.Y,2);
         static List<Vector3> Points(params double[] xy)=>Enumerable.Range(0,xy.Length/2).Select(i=>P(xy[2*i],xy[2*i+1])).ToList();
-        static int Steps(double radius,double angle)
+        static int Steps(double radius,double angle,double sagitta=Sagitta)
         {
-            double step=2*Math.Acos(Math.Max(-1,1-Sagitta/radius));
+            double step=2*Math.Acos(Math.Max(-1,1-sagitta/radius));
             double count=Math.Max(Math.Ceiling(angle/Math.Max(step,1e-12)),Math.Ceiling(angle/(Math.PI/12)));
             if(count>2048)throw new InvalidDataException("Радиус слишком велик для заданной точности проекции.");
             return Math.Max(1,(int)count);
         }
-        static List<Vector3> Arc(double r,double angle,bool full,double x=0,double y=0)
+        static List<Vector3> Arc(double r,double angle,bool full,double x=0,double y=0,double factor=1)
         {
-            int n=Steps(r,angle);
+            int n=Steps(r,angle,Sagitta/factor);
             return Enumerable.Range(0,full?n:n+1).Select(i=>P(x+r*Math.Cos(angle*i/n),y+r*Math.Sin(angle*i/n))).ToList();
         }
-        static void BuildIBeamProfile(Profile q,IBeamShape b)
+        static void BuildIBeamProfile(Profile q,IBeamShape b,double factor)
         {
             double w=b.Width/2,h2=b.Height/2,t=b.WebThickness/2,f=b.FlangeThickness,r=b.RootRadius;
             q.Length=b.Length;
@@ -97,7 +97,7 @@ namespace KotNode.Core
             var edgeFrom=new List<double>();
             var edgeTo=new List<double>();
             var vertexKeys=new List<string>();
-            int nArc=Steps(r,Math.PI/2);
+            int nArc=Steps(r,Math.PI/2,Sagitta/factor);
             // Concave root corners in CCW order: cornerIndex -> (filletId, cx, cy, startAngle)
             var fillets=new Dictionary<int,Tuple<int,double,double,double>>
             {
@@ -152,7 +152,7 @@ namespace KotNode.Core
                     q.Length=p.Plate.Thickness;q.Add(Points(0,0,p.Plate.Length,0,p.Plate.Length,p.Plate.Width,0,p.Plate.Width));break;
                 case PartKind.Pipe:
                     q.Length=p.Pipe.Length;double r=p.Pipe.OuterDiameter/2;
-                    q.Add(Arc(r,Tau,true),new int[0]);q.Add(Arc(r-p.Pipe.Thickness,Tau,true),new int[0]);break;
+                    q.Add(Arc(r,Tau,true,factor:MemberEndCuts.TessellationFactor(p)),new int[0]);q.Add(Arc(r-p.Pipe.Thickness,Tau,true,factor:MemberEndCuts.TessellationFactor(p)),new int[0]);break;
                 case PartKind.CurvedPlate:
                     var c=p.CurvedPlate;q.Length=c.Length;
                     bool full=Math.Abs(c.AngleRadians-Tau)<1e-10;
@@ -168,7 +168,7 @@ namespace KotNode.Core
                     foreach(var h in p.PolygonPlate.RoundHoles)q.Add(Arc(h.Radius,Tau,true,h.Center.X,h.Center.Y),new int[0]);
                     break;
                 case PartKind.IBeam:
-                    BuildIBeamProfile(q,p.IBeam);break;
+                    BuildIBeamProfile(q,p.IBeam,MemberEndCuts.TessellationFactor(p));break;
                 default:throw new InvalidDataException("Пространственная проекция пока не поддерживает деталь: "+p.Name);
             }
             return q;
@@ -560,8 +560,8 @@ namespace KotNode.Core
                 }
                 var profile=Shape(p);
                 Func<Vector3,double,Vector3> world=(v,z)=>View(i.Placement.ToWorld(new Vector3(v.X,v.Y,z)),frame);
-                var bottom=profile.Rings.Select(r=>r.Select(v=>world(v,0)).ToList()).ToArray();
-                var top=profile.Rings.Select(r=>r.Select(v=>world(v,profile.Length)).ToList()).ToArray();
+                var bottom=profile.Rings.Select(r=>r.Select(v=>world(v,MemberEndCuts.HasCuts(p)?MemberEndCuts.Z(p,true,v.X,v.Y):0)).ToList()).ToArray();
+                var top=profile.Rings.Select(r=>r.Select(v=>world(v,MemberEndCuts.HasCuts(p)?MemberEndCuts.Z(p,false,v.X,v.Y):profile.Length)).ToList()).ToArray();
                 var own=new List<Face>{
                     new Face(bottom){CutKey=Source(p,"cut:bottom")},
                     new Face(top){CutKey=Source(p,"cut:top")}};

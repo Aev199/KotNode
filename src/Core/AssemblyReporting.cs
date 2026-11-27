@@ -99,7 +99,7 @@ namespace KotNode.Core
             if(nodeCount>1)
                 rows.Add(new[]{"","","Итого на "+nodeCount+" марок:","","",M(totalAll),""});
             int excluded=mark.Parts.Count(p=>!p.IncludeInSpec&&mark.Instances.Any(i=>i.PartId==p.Id));
-            string note="Масса нетто без припусков и металла швов."+(excluded>0?" Справочных позиций исключено: "+excluded+".":"");
+            string note="Трубы и двутавры — по длине заготовки без вычета подрезки. Масса без припусков и металла швов."+(excluded>0?" Справочных позиций исключено: "+excluded+".":"");
             int noteRow=rows.Count;
             rows.Add(new[]{note});
             return new TablePlan
@@ -146,7 +146,7 @@ namespace KotNode.Core
                 rows.Add(new[]{s.Profile,s.Material,s.DetailCount.ToString(CultureInfo.InvariantCulture),M(s.MassKg),T(s.MassKg)});
             rows.Add(new[]{"Итого","",summary.Sum(s=>s.DetailCount).ToString(CultureInfo.InvariantCulture),M(total),T(total)});
             int noteRow=rows.Count;
-            rows.Add(new[]{"Учтены только детали с флагом спецификации. Без припусков и наплавленного металла."});
+            rows.Add(new[]{"Учтены детали с флагом спецификации. Трубы/двутавры — по заготовке без вычета подрезки; без припусков и металла швов."});
             return new TablePlan
             {
                 Title=rows[0][0],

@@ -268,7 +268,9 @@ namespace KotNode.AutoCAD
                     {"PolygonPlate.Thickness","Контурный лист: толщина t"},
                     {"CurvedPlate.InnerRadius","Кривой лист: радиус Rвн"},{"CurvedPlate.Thickness","Кривой лист: толщина t"},
                     {"CurvedPlate.Length","Кривой лист: длина L"},{"CurvedPlate.AngleDeg","Кривой лист: угол, град"},
-                    {"IBeam.Length","Двутавр: длина L"},{"Rebar.Diameter","Арматура: диаметр d"}
+                    {"IBeam.Length","Двутавр: длина L"},{"Rebar.Diameter","Арматура: диаметр d"},
+                    {"EndCuts.Start.AngleXDeg","Начало: угол торца в XZ"},{"EndCuts.Start.AngleYDeg","Начало: угол торца в YZ"},{"EndCuts.Start.OffsetMm","Начало: отступ подрезки"},
+                    {"EndCuts.End.AngleXDeg","Конец: угол торца в XZ"},{"EndCuts.End.AngleYDeg","Конец: угол торца в YZ"},{"EndCuts.End.OffsetMm","Конец: отступ подрезки"}
                 };
                 f.Choice("Свойство","prop",props,"Plate.Length");
                 f.TextField("Формула","formula","L");

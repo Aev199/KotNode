@@ -22,9 +22,9 @@ namespace KotNode.Core
 
         public void Validate()
         {
-            Guard.Require((Schema == 1 || Schema == 2) && Id != Guid.Empty && Guard.Text(Code) && Guard.Text(Name), "Неверная марка или версия модели.");
+            Guard.Require((Schema == 1 || Schema == 2 || Schema == 3) && Id != Guid.Empty && Guard.Text(Code) && Guard.Text(Name), "Неверная марка или версия модели.");
             Guard.Require(Parts != null && Instances != null, "Отсутствует состав марки.");
-            Guard.Require(Schema==2||WeldDefinitions==null||WeldDefinitions.Count==0,"Определения швов требуют версии модели 2.");
+            Guard.Require(Schema>=2||WeldDefinitions==null||WeldDefinitions.Count==0,"Определения швов требуют версии модели 2.");
             var weldIds=new HashSet<Guid>();
             foreach(var definition in WeldDefinitions??new List<WeldDefinition>())
             {Guard.Require(definition!=null,"Пустое определение шва.");definition.Validate();Guard.Require(weldIds.Add(definition.Id),"Дубли определений швов.");}
@@ -33,6 +33,7 @@ namespace KotNode.Core
             foreach (var p in Parts)
             {
                 Guard.Require(p != null, "Пустая деталь.");
+                Guard.Require(Schema>=3||!MemberEndCuts.HasCuts(p),"Подрезки требуют версии модели 3.");
                 p.Validate();
                 Guard.Require(ids.Add(p.Id), "Дубли идентификаторов деталей.");
                 if (p.IncludeInSpec) Guard.Require(positions.Add(p.Position.Trim()), "Дубли позиций спецификации.");
@@ -214,6 +215,7 @@ namespace KotNode.Core
         public PolygonPlateShape PolygonPlate { get; set; }
         public IBeamShape IBeam { get; set; }
         public RebarShape Rebar { get; set; }
+        public MemberEndTreatment EndCuts { get; set; }
 
         public void Validate()
         {
@@ -234,6 +236,7 @@ namespace KotNode.Core
                 case PartKind.Rebar: Guard.Require(Rebar != null, "Не задан стержень."); Rebar.Validate(); break;
                 default: throw new InvalidDataException("Неизвестный тип детали.");
             }
+            MemberEndCuts.Validate(this);
         }
         public double UnitMassKg()
         {
