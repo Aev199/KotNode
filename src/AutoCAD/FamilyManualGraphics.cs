@@ -12,7 +12,13 @@ namespace KotNode.AutoCAD
         internal static string Export(Database source,Transaction tr,AssemblyViews.Entry entry)
         {
             var shell=(BlockTableRecord)tr.GetObject(entry.Reference.BlockTableRecord,OpenMode.ForRead);
-            var ids=new ObjectIdCollection(shell.Cast<ObjectId>().Where(id=>!id.IsErased&&id.Handle.ToString()!=entry.Data.GeneratedChildHandle).ToArray());
+            // The AutoCAD 2021 array constructor can throw before we can check
+            // Count (notably on a view with no manually added entities).
+            // Build the native collection incrementally; do the same on import.
+            var ids=new ObjectIdCollection();
+            foreach(ObjectId id in shell)
+                if(!id.IsErased&&id.Handle.ToString()!=entry.Data.GeneratedChildHandle)ids.Add(id);
+            Diagnostics.Step("Семейство: ручная графика «"+entry.Data.Name+"», объектов: "+ids.Count);
             if(ids.Count==0)return null;
             string path=Path.Combine(Path.GetTempPath(),"kotnode-family-"+Guid.NewGuid().ToString("N")+".dwg");
             try
@@ -43,7 +49,12 @@ namespace KotNode.AutoCAD
                     payload.CloseInput(true);
                     ObjectIdCollection ids;
                     using(var pt=payload.TransactionManager.StartTransaction())
-                    { ids=new ObjectIdCollection(AssemblyDrawing.ModelSpace(payload,pt).Cast<ObjectId>().Where(id=>!id.IsErased).ToArray());pt.Commit(); }
+                    {
+                        ids=new ObjectIdCollection();
+                        foreach(ObjectId id in AssemblyDrawing.ModelSpace(payload,pt))
+                            if(!id.IsErased)ids.Add(id);
+                        pt.Commit();
+                    }
                     if(ids.Count>0)payload.WblockCloneObjects(ids,view.BlockTableRecord,new IdMapping(),DuplicateRecordCloning.MangleName,false);
                 }
             }

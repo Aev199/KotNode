@@ -117,6 +117,19 @@ namespace KotNode.AutoCAD
 
                         // Stage 4.1: Apply LineOverrides + Welds + Stage 5 Annotations (Dims, Position Leader, Weld Leader, Axis, SectionMark)
                         var topEntry=views.Single(v=>v.Data.Name=="Вид сверху");
+                        Assert(FamilyManualGraphics.Export(scratch,tr,topEntry)==null,
+                            "Family save accepts a generated view with zero manual entities",log);
+                        var emptyShell=(BlockTableRecord)tr.GetObject(topEntry.Reference.BlockTableRecord,OpenMode.ForWrite);
+                        var exportProbe=new Line(Point3d.Origin,new Point3d(10,0,0));
+                        emptyShell.AppendEntity(exportProbe);tr.AddNewlyCreatedDBObject(exportProbe,true);
+                        Assert(!string.IsNullOrEmpty(FamilyManualGraphics.Export(scratch,tr,topEntry)),
+                            "Family save exports a single manual entity",log);
+                        exportProbe.Erase();
+                        Assert(FamilyManualGraphics.Export(scratch,tr,topEntry)==null,
+                            "Family save skips erased manual entities without an empty-array constructor",log);
+                        FamilyManualGraphics.Import(scratch,tr,topEntry.Reference,null);
+                        Assert(emptyShell.Cast<ObjectId>().Count(id=>!id.IsErased)==1,
+                            "Import of an empty manual payload preserves only the generated child",log);
                         var chains=ParametricViewDrawing.ComputeChains(mark,topEntry.Data);
                         Assert(chains.Count>10&&chains.All(ViewLineOverrides.HasSource),"All displayed chains have semantic SourceKey ("+chains.Count+")",log);
                         var batch=Guid.NewGuid();
