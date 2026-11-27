@@ -1317,7 +1317,7 @@ namespace KotNode.AutoCAD
                 confirm.Keywords.Add("Yes");confirm.Keywords.Add("No");confirm.Keywords.Default="No";
                 var choice=doc.Editor.GetKeywords(confirm);
                 if(choice.Status!=PromptStatus.OK||choice.StringResult!="Yes")return;
-                view.Reference.UpgradeOpen();view.Reference.Erase();
+                AssemblyViews.Erase(doc.Database,tr,m,view);
                 return;
             }
             var instances=m.Instances.Where(i=>i.Id==id||i.PartId==id).ToList();

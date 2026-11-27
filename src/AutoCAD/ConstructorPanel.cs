@@ -85,17 +85,17 @@ namespace KotNode.AutoCAD
             var moreBtn=new PaletteButton{Text="Ещё ▾",AutoSize=true,Height=26,Margin=new Padding(2,0,0,0),FlatStyle=FlatStyle.Standard};
             tips.SetToolTip(moreBtn,"Редкие и служебные команды марки");
 
-            moreMenu.Items.Add("Новая марка (NANEW)",null,(s,e)=>Queue("NANEW"));
-            moreMenu.Items.Add("Библиотека семейств (NAFAMILY)",null,(s,e)=>Queue("NAFAMILY"));
-            moreMenu.Items.Add("Сохранить как семейство (NAFAMILYSAVE)",null,(s,e)=>Queue("NAFAMILYSAVE"));
+            AddMore("Новая марка (NANEW)","NANEW");
+            AddMore("Библиотека семейств (NAFAMILY)","NAFAMILY");
+            AddMore("Сохранить как семейство (NAFAMILYSAVE)","NAFAMILYSAVE");
             moreMenu.Items.Add(new ToolStripSeparator());
-            moreMenu.Items.Add("Параметры и формулы (NAPARAMS)",null,(s,e)=>Queue("NAPARAMS"));
-            moreMenu.Items.Add("Пересчитать параметры (NASOLVE)",null,(s,e)=>Queue("NASOLVE"));
-            moreMenu.Items.Add("Выгрузить CSV (NAEXPORTCSV)",null,(s,e)=>Queue("NAEXPORTCSV"));
+            AddMore("Параметры и формулы (NAPARAMS)","NAPARAMS");
+            AddMore("Пересчитать параметры (NASOLVE)","NASOLVE");
+            AddMore("Выгрузить CSV (NAEXPORTCSV)","NAEXPORTCSV");
             moreMenu.Items.Add(new ToolStripSeparator());
-            moreMenu.Items.Add("Синхронизировать положения (NASYNC)",null,(s,e)=>Queue("NASYNC"));
-            moreMenu.Items.Add("Перевести старый вид (NAMIGRATEVIEW)",null,(s,e)=>Queue("NAMIGRATEVIEW"));
-            moreMenu.Items.Add("Восстановить пропавшие детали (NAREPAIR)",null,(s,e)=>Queue("NAREPAIR"));
+            AddMore("Синхронизировать положения (NASYNC)","NASYNC");
+            AddMore("Перевести старый вид (NAMIGRATEVIEW)","NAMIGRATEVIEW");
+            AddMore("Восстановить пропавшие детали (NAREPAIR)","NAREPAIR");
             moreBtn.Click+=(s,e)=>moreMenu.Show(moreBtn,new Point(0,moreBtn.Height));
 
             topButtons.Controls.Add(newMarkBannerButton);
@@ -203,7 +203,7 @@ namespace KotNode.AutoCAD
             AddGridButton(grid,1,1,"Переместить","NAMOVENODE","Переместить весь активный узел с сохранением размещения после пересчёта");
             AddGridButton(grid,2,1,"Шифр / название","NANODERENAME","Изменить шифр и название активного узла");
             AddGridButton(grid,0,2,"В семейство","NAFAMILYSAVE","Сохранить активный узел с оформлением");
-            AddGridButton(grid,1,2,"Обновить все","NAUPDATEALLNODES","Пересчитать все узлы в текущем DWG");
+            AddGridButton(grid,1,2,"Все узлы DWG","NAUPDATEALLNODES","Пересчитать все узлы в текущем DWG");
             AddGridButton(grid,2,2,"Удалить узел","NANODEDELETE","Удалить активный узел целиком после подтверждения");
             page.Controls.Add(grid);return page;
         }
@@ -253,6 +253,9 @@ namespace KotNode.AutoCAD
         }
         void SetNodeAvailability(Control parent,bool hasNode)
         {
+            if(parent==this)foreach(ToolStripItem item in moreMenu.Items)
+                if(item.Tag is string cmd)
+                {var tool=ToolCatalog.All.FirstOrDefault(t=>t.Command==cmd);if(tool!=null&&tool.RequiresNode)item.Enabled=hasNode;}
             foreach(Control c in parent.Controls)
             {
                 if(c.Tag is string command)
@@ -303,7 +306,7 @@ namespace KotNode.AutoCAD
             AddGridButton(grid,0,0,"Создать вид","NAVIEW","Построить параметрический вид (NAVIEW)");
             AddGridButton(grid,1,0,"Разрез","NASECTION","Построить параметрический разрез (NASECTION)");
             AddGridButton(grid,2,0,"Сечение","NACROSS","Построить чистое сечение без заднего плана (NACROSS)");
-            AddGridButton(grid,0,1,"Обновить все","NAUPDATEVIEWS","Перестроить все параметрические виды марки (NAUPDATEVIEWS)");
+            AddGridButton(grid,0,1,"Все виды узла","NAUPDATEVIEWS","Перестроить все параметрические виды марки (NAUPDATEVIEWS)");
             AddGridButton(grid,1,1,"Обновить вид","NAUPDATEVIEW","Перестроить один выбранный вид (NAUPDATEVIEW)");
             AddGridButton(grid,2,1,"Свойства вида","NAEDITVIEW","Изменить параметры, плоскость или привязку вида (NAEDITVIEW)");
             var lineEdit=GridButton("Редактировать линии","NALINEEDIT","Скрыть, показать или переключить тип линии/участка вида (NALINEEDIT)");
@@ -365,6 +368,10 @@ namespace KotNode.AutoCAD
             return b;
         }
 
+        void AddMore(string title,string command)
+        {
+            var item=moreMenu.Items.Add(title,null,(s,e)=>Queue(command));item.Tag=command;
+        }
         void AddGridButton(TableLayoutPanel grid,int col,int row,string text,string command,string tooltip)
             =>grid.Controls.Add(GridButton(text,command,tooltip),col,row);
 

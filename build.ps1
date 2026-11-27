@@ -14,6 +14,7 @@ try {
     Copy-Item src/Core/bin/Release/net48/KotNode.Core.pdb plugin -Force
     Copy-Item docs/USER_GUIDE_RU.md plugin/README_RU.md -Force
     Copy-Item docs/UI_UX_AUDIT_RU.md plugin/UI_UX_AUDIT_RU.md -Force
+    Copy-Item docs/REVIEW_0_3_0_RU.md plugin/REVIEW_0_3_0_RU.md -Force
     Copy-Item docs/prototype/preview.png plugin/preview.png -Force
     Write-Host 'Ready: plugin/KotNode.AutoCAD.dll. Load with NETLOAD in AutoCAD 2021.'
 } finally { Pop-Location }

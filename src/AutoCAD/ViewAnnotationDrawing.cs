@@ -136,6 +136,16 @@ namespace KotNode.AutoCAD
             else if(d is DiametricDimension dia){dia.ChordPoint=a;dia.FarChordPoint=b;dia.LeaderLength=Math.Max(5,Math.Sqrt(rd.Source.OffsetX*rd.Source.OffsetX+rd.Source.OffsetY*rd.Source.OffsetY)-rd.Radius);}
             else if(d is RadialDimension rad){rad.Center=ToWorld(xform,rd.Center);rad.ChordPoint=a;rad.LeaderLength=Math.Max(5,Math.Sqrt(rd.Source.OffsetX*rd.Source.OffsetX+rd.Source.OffsetY*rd.Source.OffsetY)-rd.Radius);}
         }
+        internal static void EraseForView(Database db,Transaction tr,Guid viewId)
+        {
+            foreach(ObjectId id in AssemblyDrawing.ModelSpace(db,tr))
+            {
+                if(id.IsErased)continue;
+                var entity=tr.GetObject(id,OpenMode.ForRead) as Entity;
+                if(ReadTag(entity,tr)?.ViewId!=viewId)continue;
+                if(!entity.IsWriteEnabled)entity.UpgradeOpen();entity.Erase();
+            }
+        }
         internal static void CaptureOffsets(Database db,Transaction tr,AssemblyViews.Entry entry)
         {
             var existing=new List<Tuple<Entity,AnnoTag>>();

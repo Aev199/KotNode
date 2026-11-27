@@ -111,6 +111,16 @@ namespace KotNode.AutoCAD
             }
             return result;
         }
+        internal static void Erase(Database db,Transaction tr,AssemblyMark mark,Entry entry)
+        {
+            if(entry.Data.MarkId!=mark.Id)throw new InvalidOperationException("Вид относится к другому узлу.");
+            NodeCommands.ExclusiveOwned(db,tr,mark);
+            // Annotations are native ModelSpace entities, not children of the view
+            // shell. Erase them before removing their only ownership link.
+            ViewAnnotationDrawing.EraseForView(db,tr,entry.Data.Id);
+            if(!entry.Reference.IsWriteEnabled)entry.Reference.UpgradeOpen();
+            entry.Reference.Erase();
+        }
         internal static void Save(BlockReference b,Transaction tr,ViewData data)
         {
             if(!b.IsWriteEnabled)b.UpgradeOpen();
@@ -398,7 +408,7 @@ namespace KotNode.AutoCAD
                 if(dict.Contains(Key)||dict.Contains("KOTNODE_INSTANCE_1"))
                     throw new InvalidOperationException("Объект уже управляется конструктором.");
             }
-            if(AssemblyDrawing.AuxiliaryGroups(db,tr,mark).Any(g=>g.Item2.Contains(reference.ObjectId)))
+            if(AssemblyDrawing.LoadNodes(db,tr).Nodes.Any(n=>AssemblyDrawing.AuxiliaryGroups(db,tr,n).Any(g=>g.Item2.Contains(reference.ObjectId))))
                 throw new InvalidOperationException("Блок уже включён во вспомогательную графику.");
             var placement=AssemblyDrawing.Placement(reference);
             if(Math.Abs(placement.Origin.Z)>1e-5||Math.Abs(placement.AxisX.Z)>1e-8||Math.Abs(placement.AxisY.Z)>1e-8)

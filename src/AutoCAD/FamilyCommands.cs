@@ -57,7 +57,7 @@ namespace KotNode.AutoCAD
                     // Normalize placements from inserted BlockReferences BEFORE computing view SourceHash
                     // so newly inserted views immediately match Signature(mark) with zero false [обновить] warnings.
                     AssemblyDrawing.Synchronize(doc.Database,tr,mark);
-                    double maxViewX=1500,maxViewY=400;
+                    double maxViewX=(mark.LayoutOrigin?.X??0)+1500,maxViewY=(mark.LayoutOrigin?.Y??0)+400;
                     bool hasViewExt=false;
                     if(chosen.Views!=null)
                     {

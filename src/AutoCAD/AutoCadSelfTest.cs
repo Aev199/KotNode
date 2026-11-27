@@ -32,6 +32,26 @@ namespace KotNode.AutoCAD
             finally{HostApplicationServices.WorkingDatabase=prev;}
         }
 
+        static BlockReference ReviewBlock(Database db,Transaction tr,Point3d at)
+        {
+            var blocks=(BlockTable)tr.GetObject(db.BlockTableId,OpenMode.ForWrite);
+            var definition=new BlockTableRecord{Name="REVIEW_"+Guid.NewGuid().ToString("N")};
+            var id=blocks.Add(definition);tr.AddNewlyCreatedDBObject(definition,true);
+            var line=new Line(Point3d.Origin,new Point3d(10,0,0));definition.AppendEntity(line);tr.AddNewlyCreatedDBObject(line,true);
+            var reference=new BlockReference(at,id);AssemblyDrawing.ModelSpace(db,tr,OpenMode.ForWrite).AppendEntity(reference);tr.AddNewlyCreatedDBObject(reference,true);
+            return reference;
+        }
+        static ObjectId ReviewDimension(Database db,Transaction tr,AssemblyMark mark,AssemblyViews.Entry entry)
+        {
+            var edge=ParametricViewDrawing.ComputeRawCurves(mark,entry.Data).First(c=>!c.Circular&&!string.IsNullOrEmpty(c.SourceKey)&&Math.Abs(c.SourceTo-c.SourceFrom)>1e-6&&Math.Pow(c.X1-c.X0,2)+Math.Pow(c.Y1-c.Y0,2)>100);
+            var dim=new ViewDimension{Kind=ViewDimensionKind.Aligned,OffsetY=-80,
+                AnchorA=new ViewAnchor{Kind=ViewAnchorKind.EdgePoint,InstanceId=edge.InstanceId,SourceKey=edge.SourceKey,Param=edge.SourceFrom},
+                AnchorB=new ViewAnchor{Kind=ViewAnchorKind.EdgePoint,InstanceId=edge.InstanceId,SourceKey=edge.SourceKey,Param=edge.SourceTo}};
+            entry.Data.Dimensions.Add(dim);
+            AssemblyViews.Rebuild(db,tr,mark,AssemblyDrawing.Synchronize(db,tr,mark),entry);
+            return AssemblyDrawing.ModelSpace(db,tr).Cast<ObjectId>().Single(id=>!id.IsErased&&ViewAnnotationDrawing.ReadTag(tr.GetObject(id,OpenMode.ForRead) as Entity,tr)?.AnnotationId==dim.Id);
+        }
+
         [CommandMethod("NAE2ETEST",CommandFlags.Modal)]
         public void RunE2E()
         {
@@ -374,6 +394,40 @@ namespace KotNode.AutoCAD
                         Assert(rejects,"Compatibility record prevents old readers from overwriting a multi-node DWG",log);
                         nodes=AssemblyDrawing.LoadNodes(nodesDb,tr);nodes.Activate(a.Id);AssemblyDrawing.SaveNodes(nodesDb,tr,nodes);
                         Assert(AssemblyDrawing.Load(nodesDb,tr).Id==a.Id,"Active node selection persists separately from edits to other nodes",log);
+
+                        var auxRef=ReviewBlock(nodesDb,tr,new Point3d(8000,1000,0));
+                        AssemblyDrawing.AddAuxiliary(nodesDb,tr,a,new[]{auxRef.ObjectId});
+                        bool refused=false;
+                        try{AssemblyViews.AttachSnapshot(nodesDb,tr,bAfter,auxRef,new AssemblyViews.ViewData{Name="Wrong owner"});}
+                        catch(InvalidOperationException){refused=true;}
+                        Assert(refused&&AssemblyViews.Find(nodesDb,tr,bAfter).All(v=>v.Reference.ObjectId!=auxRef.ObjectId),
+                            "Import cannot steal another node's auxiliary block",log);
+                        var groups=(DBDictionary)tr.GetObject(nodesDb.GroupDictionaryId,OpenMode.ForWrite);
+                        string badKey="NA_AUX_"+bAfter.Id.ToString("N")+"_REVIEW";
+                        var shared=new Group("Legacy conflicting group",true);groups.SetAt(badKey,shared);tr.AddNewlyCreatedDBObject(shared,true);
+                        var sharedIds=new ObjectIdCollection();sharedIds.Add(auxRef.ObjectId);shared.Append(sharedIds);
+                        refused=false;try{NodeCommands.ExclusiveOwned(nodesDb,tr,a);}catch(InvalidOperationException){refused=true;}
+                        Assert(refused,"Destructive node actions reject graphics shared through conflicting auxiliary groups",log);
+                        groups.Remove(badKey);shared.Erase();
+
+                        var av=AssemblyViews.Find(nodesDb,tr,a).Single();var bv=AssemblyViews.Find(nodesDb,tr,bAfter).Single();
+                        var adim=ReviewDimension(nodesDb,tr,a,av);var bdim=ReviewDimension(nodesDb,tr,bAfter,bv);
+                        var legacyRef=ReviewBlock(nodesDb,tr,new Point3d(13000,1000,0));
+                        var legacyData=new AssemblyViews.ViewData{Name="Legacy movable view"};
+                        AssemblyViews.AttachSnapshot(nodesDb,tr,bAfter,legacyRef,legacyData);
+                        legacyData.ManualSnapshot=false;AssemblyViews.Save(legacyRef,tr,legacyData);
+                        var legacyBefore=legacyRef.Position;var liveBefore=bv.Reference.Position;
+                        var dimBefore=((AlignedDimension)tr.GetObject(bdim,OpenMode.ForRead)).DimLinePoint;
+                        var delta=new Vector3d(300,400,0);
+                        NodeCommands.Translate(nodesDb,tr,bAfter,AssemblyDrawing.Synchronize(nodesDb,tr,bAfter),delta);
+                        Assert(legacyRef.Position.DistanceTo(legacyBefore+delta)<1e-6&&bv.Reference.Position.DistanceTo(liveBefore+delta)<1e-6,
+                            "Whole-node move handles legacy and managed views together",log);
+                        Assert(((AlignedDimension)tr.GetObject(bdim,OpenMode.ForRead)).DimLinePoint.DistanceTo(dimBefore+delta)<1e-5,
+                            "Whole-node move carries native dimension without extra offset",log);
+                        Assert(AssemblyDrawing.Load(nodesDb,tr).Id==a.Id&&!adim.IsErased,"Moving a non-active node preserves active selection and neighbour annotations",log);
+                        AssemblyViews.Erase(nodesDb,tr,a,av);
+                        Assert(adim.IsErased&&!bdim.IsErased,"Deleting a view erases only its own native annotations",log);
+                        Assert(!auxRef.IsErased,"Deleting a view preserves unrelated auxiliary graphics",log);
                         tr.Commit();
                     }
                 });

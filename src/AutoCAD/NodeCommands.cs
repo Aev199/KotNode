@@ -44,6 +44,14 @@ namespace KotNode.AutoCAD
             }
             return ids;
         }
+        internal static List<ObjectId> ExclusiveOwned(Database db,Transaction tr,AssemblyMark mark)
+        {
+            var ids=Owned(db,tr,mark);var own=new HashSet<ObjectId>(ids);
+            foreach(var other in AssemblyDrawing.LoadNodes(db,tr).Nodes.Where(n=>n.Id!=mark.Id))
+                if(Owned(db,tr,other).Any(own.Contains))
+                    throw new InvalidOperationException("Найдена общая графика у узлов «"+mark.Code+"» и «"+other.Code+"». Перемещение/удаление остановлено, чтобы не затронуть соседний узел.");
+            return ids;
+        }
         static AssemblyMark Need(Database db,Transaction tr)=>AssemblyDrawing.Load(db,tr)??throw new InvalidOperationException("В DWG нет узлов.");
         [CommandMethod("NAACTIVATE",CommandFlags.Modal)]
         public void Activate()=>Run("NAACTIVATE",(doc,tr)=>{
@@ -95,23 +103,30 @@ namespace KotNode.AutoCAD
             var b=doc.Editor.GetPoint("\nНовое положение: ");if(b.Status!=PromptStatus.OK)return;
             var delta=(b.Value-a.Value).TransformBy(doc.Editor.CurrentUserCoordinateSystem);
             if(Math.Abs(delta.Z)>1e-8)throw new InvalidOperationException("Перемещайте узел в мировой XY.");
-            var views=AssemblyViews.Find(doc.Database,tr,mark);
-            foreach(var v in views)ViewAnnotationDrawing.CaptureOffsets(doc.Database,tr,v);
-            foreach(var id in Owned(doc.Database,tr,mark))((Entity)tr.GetObject(id,OpenMode.ForWrite)).TransformBy(Matrix3d.Displacement(delta));
+            Translate(doc.Database,tr,mark,refs,delta);
+        });
+        internal static void Translate(Database db,Transaction tr,AssemblyMark mark,Dictionary<Guid,BlockReference> refs,Vector3d delta)
+        {
+            if(Math.Abs(delta.Z)>1e-8)throw new InvalidOperationException("Перемещайте узел в мировой XY.");
+            var ids=ExclusiveOwned(db,tr,mark);
+            var views=AssemblyViews.Find(db,tr,mark);
+            foreach(var v in views)ViewAnnotationDrawing.CaptureOffsets(db,tr,v);
+            foreach(var id in ids)((Entity)tr.GetObject(id,OpenMode.ForWrite)).TransformBy(Matrix3d.Displacement(delta));
             var d=new Vector3(delta.X,delta.Y,0);NodePlacement.TranslateMark(mark,d);
             foreach(var v in views)
             {
                 v.Data.Frame.Origin=NodePlacement.Add(v.Data.Frame.Origin,d);
-                if(v.Data.ManualSnapshot){v.Data.SourceHash=AssemblyViews.Signature(mark);AssemblyViews.Save(v.Reference,tr,v.Data);}
-                else AssemblyViews.Rebuild(doc.Database,tr,mark,refs,v);
+                if(v.Data.ManualSnapshot||string.IsNullOrEmpty(v.Data.GeneratedChildHandle))
+                {v.Data.SourceHash=AssemblyViews.Signature(mark);AssemblyViews.Save(v.Reference,tr,v.Data);}
+                else AssemblyViews.Rebuild(db,tr,mark,refs,v);
             }
-            AssemblyDrawing.Save(doc.Database,tr,mark);
-        });
+            AssemblyDrawing.Save(db,tr,mark);
+        }
         [CommandMethod("NANODEDELETE",CommandFlags.Modal)]
         public void Delete()=>Run("NANODEDELETE",(doc,tr)=>{
             var mark=Need(doc.Database,tr);
             if(MessageBox.Show("Удалить узел «"+mark.Code+"» с деталями, видами, оформлением и таблицами?","Удаление узла",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
-            foreach(var id in Owned(doc.Database,tr,mark))tr.GetObject(id,OpenMode.ForWrite).Erase();
+            foreach(var id in ExclusiveOwned(doc.Database,tr,mark))tr.GetObject(id,OpenMode.ForWrite).Erase();
             var groups=(DBDictionary)tr.GetObject(doc.Database.GroupDictionaryId,OpenMode.ForRead);
             foreach(var g in AssemblyDrawing.AuxiliaryGroups(doc.Database,tr,mark))
             {var group=tr.GetObject(groups.GetAt(g.Item1),OpenMode.ForWrite);if(!groups.IsWriteEnabled)groups.UpgradeOpen();groups.Remove(g.Item1);group.Erase();}
