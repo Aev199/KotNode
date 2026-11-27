@@ -3,8 +3,11 @@ from pathlib import Path
 import re
 root=Path(__file__).resolve().parents[1]
 registered=set()
+registrations=[]
 for path in (root/'src/AutoCAD').glob('*.cs'):
-    registered.update(re.findall(r'\[CommandMethod\("([A-Z0-9]+)"',path.read_text(encoding='utf-8')))
+    registrations.extend(re.findall(r'\[CommandMethod\("([A-Z0-9]+)"',path.read_text(encoding='utf-8')))
+registered=set(registrations)
+assert len(registrations)==len(registered),'Duplicate registered command names'
 text=(root/'src/AutoCAD/ToolCatalog.cs').read_text(encoding='utf-8')
 entries=re.findall(r'new ToolAction\("([A-Z0-9]+)","([^"]+)","([^"]+)",(true|false)\)',text)
 buttons={row[0] for row in entries}
